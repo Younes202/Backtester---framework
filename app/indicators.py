@@ -39,7 +39,7 @@ class Strategy:
         
         # Buy signal: RSI < 40, price above support, and short SMA above long SMA (uptrend confirmation)
         self.data.loc[
-            (self.data['RSI'] <= 40) & 
+            (self.data['RSI'] <= 45) & 
             (self.data['close_price'] > self.data['Support']) & 
             (self.data['SMA_Short'] > self.data['SMA_Long']),
             'Signal'
