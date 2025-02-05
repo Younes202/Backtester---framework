@@ -3,11 +3,14 @@ from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.declarative import declarative_base
 from typing import TypeVar, List, Optional, Any
 from sqlalchemy.orm import Query
+from dotenv import load_dotenv
 import os
 
+# Load environment variables from .env file
+load_dotenv()
 
 # Database URL (set a default or override via an environment variable)
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://localhost/dogedb")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Base for  models
 Base = declarative_base()

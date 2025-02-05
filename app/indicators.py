@@ -42,38 +42,8 @@ class Strategy:
             (self.data['RSI'] <= 40) & 
             (self.data['close_price'] > self.data['Support']) & 
             (self.data['SMA_Short'] > self.data['SMA_Long']),
-            'Signal_0.5'
+            'Signal'
         ] = 1  # Buy
 
-
-        self.data.loc[
-            (self.data['RSI'] <= 45) & 
-            (self.data['close_price'] > self.data['Support']) & 
-            (self.data['SMA_Short'] > self.data['SMA_Long']),
-            'Signal_0.4'
-        ] = 1  # Buy
-
-        self.data.loc[
-            (self.data['RSI'] <= 30) & 
-            (self.data['close_price'] > self.data['Support']) & 
-            (self.data['SMA_Short'] > self.data['SMA_Long']),
-            'Signal_1'
-        ] = 1  # Buy
-
-
-        self.data.loc[
-            (self.data['RSI'] <= 25) & 
-            (self.data['close_price'] > self.data['Support']) & 
-            (self.data['SMA_Short'] > self.data['SMA_Long']),
-            'Signal_1.5'
-        ] = 1  # Buy
-
-
-        self.data.loc[
-            (self.data['RSI'] <= 20) & 
-            (self.data['close_price'] > self.data['Support']) & 
-            (self.data['SMA_Short'] > self.data['SMA_Long']),
-            'Signal_2'
-        ] = 1  # Buy
 
         return self.data

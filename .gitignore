@@ -1,0 +1,6 @@
+futures_klines_data/
+spot_klines_data/
+venv/
+app/__pycache__
+alembic/__pycache__
+__pycache__
