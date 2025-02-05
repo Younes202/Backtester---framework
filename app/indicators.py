@@ -39,11 +39,57 @@ class Strategy:
         
         # Buy signal: RSI < 40, price above support, and short SMA above long SMA (uptrend confirmation)
         self.data.loc[
-            (self.data['RSI'] <= 45) & 
+            (self.data['RSI'].between(40, 45)) & 
             (self.data['close_price'] > self.data['Support']) & 
             (self.data['SMA_Short'] > self.data['SMA_Long']),
-            'Signal'
+            'Signal_0.4'
         ] = 1  # Buy
+
+        self.data.loc[
+            (self.data['RSI'].between(35, 39)) & 
+            (self.data['close_price'] > self.data['Support']) & 
+            (self.data['SMA_Short'] > self.data['SMA_Long']),
+            'Signal_0.5'
+        ] = 1  # Buy
+
+
+        self.data.loc[
+            (self.data['RSI'].between(30, 34)) & 
+            (self.data['close_price'] > self.data['Support']) & 
+            (self.data['SMA_Short'] > self.data['SMA_Long']),
+            'Signal_1'
+        ] = 1  # Buy
+
+
+        self.data.loc[
+            (self.data['RSI'].between(25, 29)) & 
+            (self.data['close_price'] > self.data['Support']) & 
+            (self.data['SMA_Short'] > self.data['SMA_Long']),
+            'Signal_1.5'
+        ] = 1  # Buy
+
+        self.data.loc[
+            (self.data['RSI'].between(20, 24)) & 
+            (self.data['close_price'] > self.data['Support']) & 
+            (self.data['SMA_Short'] > self.data['SMA_Long']),
+            'Signal_2'
+        ] = 1  # Buy
+
+        self.data.loc[
+            (self.data['RSI'].between(15, 19)) & 
+            (self.data['close_price'] > self.data['Support']) & 
+            (self.data['SMA_Short'] > self.data['SMA_Long']),
+            'Signal_2.5'
+        ] = 1  # Buy
+
+
+        self.data.loc[
+            (self.data['RSI'].between(10, 14)) & 
+            (self.data['close_price'] > self.data['Support']) & 
+            (self.data['SMA_Short'] > self.data['SMA_Long']),
+            'Signal_3'
+        ] = 1  # Buy
+
 
 
         return self.data
