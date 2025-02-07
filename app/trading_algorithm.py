@@ -7,7 +7,40 @@ from risk_management import RiskManagement, RiskManagementD
 import pandas as pd
 from loguru import logger
 from model import Kline, Kline_BTC, Kline_ETH, Kline_BNB, Kline_ADA, Kline_DOT
+from enum import Enum
 
+
+class SignalType(Enum):
+    SIGNAL_0_4 = 0.4
+    SIGNAL_0_5 = 0.5
+    SIGNAL_1 = 1
+    SIGNAL_1_5 = 1.5
+    SIGNAL_2 = 2
+    SIGNAL_2_5 = 2.5
+    SIGNAL_3 = 3
+
+    def investment_percentage(self):
+        """Return the investment percentage based on the signal value."""
+        if self in {SignalType.SIGNAL_0_4, SignalType.SIGNAL_0_5}:
+            return 0.30  # 30%
+        elif self in {SignalType.SIGNAL_1, SignalType.SIGNAL_1_5}:
+            return 0.40  # 40%
+        elif self in {SignalType.SIGNAL_2, SignalType.SIGNAL_2_5}:
+            return 0.45  # 50%
+        elif self == SignalType.SIGNAL_3:
+            return 0.50  # 60%
+        else:
+            return 0  # Default case
+
+    @staticmethod
+    def check_last_signal(investement_1, investement_2, balance):
+        """Calculate the remaining portion of the investment based on signal values."""
+        # Here, signal_1 and signal_2 are enum instances
+        total_invested = investement_1 + investement_2
+        to_be_invested_percentage = (100 - total_invested) / 100
+        remaining_portion = to_be_invested_percentage * balance
+        return remaining_portion, round(to_be_invested_percentage, 2)
+    
 class TradingSystem:
     def __init__(self, **kwargs):
         self.month = kwargs.get('month')
@@ -18,15 +51,13 @@ class TradingSystem:
         self.fees = kwargs.get('fees', 0.1)
         self.current_balance = kwargs.get('initial_investment', 100)
         self.timeframe = kwargs.get('timeframe', None)
+        self.balance_availbale = None
         self.initial_investment = self.current_balance
         self.trade_cycles = []
-        self.in_position = False
-        self.position = None
-        self.price = 0
-        self.dateposition = None
         self.profits = 0
         self.losses = 0
-        self.is_cycle=None
+        self.is_cycle=[]
+        self.opportunites={}
 
     def fetch_data_from_db(self, timeframe=None):
         if self.month:
@@ -106,64 +137,58 @@ class TradingSystem:
 
         data = Strategy(data)
         data = data.get_decision()  # Get buy signal
-
         # Loop through the 15m current_rows.
         for i in range(1, len(data)):
             current_row = data.iloc[i]
-            if not self.in_position:
-
-
+            if len(self.is_cycle) !=3:
                 if current_row['Signal'] == 1:
-                    logger.info(f"1m entry signal found at {current_row['close_price']} on {current_row['open_time']}")
+                    # check type signal 
+                    signal_name = current_row['type']
+                    signal = SignalType[signal_name]  # Get Enum value
+                    logger.info(f"1m entry signal found at {current_row['close_price']} on {current_row['open_time']} with typoe of {signal.value} Thresold")
                     self.price = current_row['close_price']
-                    self.dateposition = current_row['open_time']
-                    self.position = 'LONG'
-                    self.in_position = True
+                    amount_invested = self.current_balance * signal.investment_percentage()
+                    opportunites = {"type": signal, "buy_time": current_row['close_time'], "buy_price": current_row['close_price'], "profit": signal.value ,"amount_invested": amount_invested}
+                    self.is_cycle.append(opportunites)
 
 
-            if self.in_position:
-                rm = RiskManagement(
-                    priceorder=self.price,
-                    currentprice=current_row['close_price'],
-                    target_profit=self.target_profit,
-                    stoploss=self.stoploss,
-                    dollar_investment=self.current_balance,
-                    atr=current_row['ATR']
-                )
-                try:
+            if self.is_cycle:
+                for cycle in self.is_cycle:
+                    rm = RiskManagement(
+                        priceorder=cycle.get("buy_price"),
+                        currentprice=current_row['close_price'],
+                        target_profit=cycle.get("profit"),
+                        stoploss=self.stoploss,
+                        dollar_investment=cycle.get("amount_invested"), 
+                        atr=current_row['ATR']
+                    )
                     if rm.should_exit():
                         net_profit = rm.profit_or_loss
 
                         if rm.stop_loss_exit():
                             logger.info("Exited position based on stop-loss.")
                         elif rm.target_profit_exit():
+
+                            cycle["sell_price"] = current_row['close_price']
+                            cycle["sell_time"] = current_row['close_time']
+                            cycle["profit_loss"] = net_profit
+
                             logger.info(
-                                f"Cycle finished at {current_row['close_price']} on {current_row['open_time']}, "
-                                f"Profit: {net_profit}%; Entry was {self.price} at {self.dateposition}"
+                                f"Cycle finished at {current_row['close_price']} on {current_row['close_time']}"
+                                f"Profit: {net_profit}%; Entry was {cycle.get("buy_price")} at {cycle.get["buy_time"]}"
                             )
-                        self.trade_cycles.append({
-                            'Date Start': self.dateposition,
-                            'Price Start': self.price,
-                            'Position': self.position,
-                            'Dollar Amount Start': self.current_balance,
-                            'Date End': current_row['open_time'],
-                            'Price End': current_row['close_price'],
-                            'Dollar Amount End': self.current_balance + net_profit,
-                            'Profit/Loss': net_profit
-                        })
+
                         if net_profit > 0:
                             self.profits += net_profit
                         else:
                             self.losses += net_profit
-                        self.in_position = False
                         if self.current_balance <= 0:
                             logger.warning("Account liquidated")
                             break
-                        # 
                         self.current_balance = self.current_balance  + net_profit
-                except SystemExit as e:
-                    logger.error(f"Trading cycle stopped due to liquidation: {str(e)}")
-                    break
+            if len(self.is_cycle) ==3:
+                self.trade_cycles.append(self.is_cycle)
+                self.is_cycle = []
 
 
     def calculate_metrics(self):
