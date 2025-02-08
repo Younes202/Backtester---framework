@@ -110,7 +110,7 @@ class BinanceFuturesKlines:
         logger.info(f"Saved all data to {file_path}")
 
 
-# Main Function to Run
+"""# Main Function to Run
 async def main():
     # Define parameters
     symbol = "BTCUSDT"
@@ -128,7 +128,7 @@ async def main():
 
 # Run the async main function
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main())"""
 
 
 

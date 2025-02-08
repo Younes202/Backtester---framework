@@ -8,6 +8,7 @@ import pandas as pd
 from loguru import logger
 from model import Kline, Kline_BTC, Kline_ETH, Kline_BNB, Kline_ADA, Kline_DOT
 from enum import Enum
+import json
 
 
 class SignalType(Enum):
@@ -26,20 +27,20 @@ class SignalType(Enum):
         elif self in {SignalType.SIGNAL_1, SignalType.SIGNAL_1_5}:
             return 0.40  # 40%
         elif self in {SignalType.SIGNAL_2, SignalType.SIGNAL_2_5}:
-            return 0.45  # 50%
+            return 0.45  # 45%
         elif self == SignalType.SIGNAL_3:
-            return 0.50  # 60%
+            return 0.50  # 50%
         else:
             return 0  # Default case
 
     @staticmethod
-    def check_last_signal(investement_1, investement_2, balance):
+    def check_last_signal(investment_1, investment_2):
         """Calculate the remaining portion of the investment based on signal values."""
         # Here, signal_1 and signal_2 are enum instances
-        total_invested = investement_1 + investement_2
-        to_be_invested_percentage = (100 - total_invested) / 100
-        remaining_portion = to_be_invested_percentage * balance
-        return remaining_portion, round(to_be_invested_percentage, 2)
+        total_invested = investment_1 + investment_2
+        to_be_invested_percentage = 1 - total_invested
+        return round(to_be_invested_percentage, 2)
+
     
 class TradingSystem:
     def __init__(self, **kwargs):
@@ -118,16 +119,10 @@ class TradingSystem:
 
 
     def run_trading_cycle(self):
-        """
-        Main trading loop using a multi-timeframe approach:
-        - Loop through the 15-minute data.
-        - When a 15-minute buy signal is found, fetch and filter 1-minute data from that time onward.
-        - Then, scan the 1-minute data for a 1-minute buy signal to time the entry.
-        """
-        # Step 1: Fetch and process 15m data.
+        """Main trading loop using a multi-timeframe approach."""
         if self.timeframe:
             data = self.fetch_data_from_db(self.timeframe)
-        else : 
+        else: 
             data = self.fetch_data_from_db()
 
         logger.info(f"1m Data fetched: {data.head(5)}")
@@ -136,128 +131,98 @@ class TradingSystem:
             return
 
         data = Strategy(data)
-        data = data.get_decision()  # Get buy signal
-        # Loop through the 15m current_rows.
+        data = data.get_decision()  # Get buy signals
+
         for i in range(1, len(data)):
             current_row = data.iloc[i]
-            if len(self.is_cycle) !=3:
-                if current_row['Signal'] == 1:
-                    # check type signal 
-                    signal_name = current_row['type']
-                    signal = SignalType[signal_name]  # Get Enum value
-                    logger.info(f"1m entry signal found at {current_row['close_price']} on {current_row['open_time']} with typoe of {signal.value} Thresold")
-                    self.price = current_row['close_price']
-                    amount_invested = self.current_balance * signal.investment_percentage()
-                    opportunites = {"type": signal, "buy_time": current_row['close_time'], "buy_price": current_row['close_price'], "profit": signal.value ,"amount_invested": amount_invested}
-                    self.is_cycle.append(opportunites)
 
+            # 🟢 Step 1: Check for Buy Signal
+            if len(self.is_cycle) != 3 and current_row['Signal'] == 1:
+                signal_name = current_row['type']
+                signal = SignalType[signal_name]  
+                logger.info(f"1m entry signal at {current_row['close_price']} on {current_row['open_time']} with type {signal.value} Threshold")
+                
+                self.price = current_row['close_price']
+                
+                if len(self.is_cycle) == 2:
+                    percentage = SignalType.check_last_signal(self.is_cycle[0]["percentage"], self.is_cycle[1]["percentage"])
+                else:
+                    percentage = signal.investment_percentage()
 
-            if self.is_cycle:
-                for cycle in self.is_cycle:
-                    rm = RiskManagement(
-                        priceorder=cycle.get("buy_price"),
-                        currentprice=current_row['close_price'],
-                        target_profit=cycle.get("profit"),
-                        stoploss=self.stoploss,
-                        dollar_investment=cycle.get("amount_invested"), 
-                        atr=current_row['ATR']
-                    )
-                    if rm.should_exit():
-                        net_profit = rm.profit_or_loss
+                amount_invested = self.current_balance * percentage
+                opportunities = {
+                    "type": signal,
+                    "buy_time": current_row['close_time'],
+                    "buy_price": current_row['close_price'],
+                    "profit": signal.value,
+                    "amount_invested": amount_invested,
+                    "percentage": percentage
+                }
 
-                        if rm.stop_loss_exit():
-                            logger.info("Exited position based on stop-loss.")
-                        elif rm.target_profit_exit():
+                # ✅ Append immediately
+                self.is_cycle.append(opportunities)
 
-                            cycle["sell_price"] = current_row['close_price']
-                            cycle["sell_time"] = current_row['close_time']
-                            cycle["profit_loss"] = net_profit
+            # 🛑 Step 2: Check for Sell Opportunities
+            for cycle in [c for c in self.is_cycle if "sell_price" not in c]:  # 🔥 Boucle uniquement sur les cycles sans vente
+                rm = RiskManagement(
+                    priceorder=cycle.get("buy_price"),
+                    currentprice=current_row['close_price'],
+                    target_profit=cycle.get("profit"),
+                    stoploss=self.stoploss,
+                    dollar_investment=cycle.get("amount_invested"), 
+                    atr=current_row['ATR']
+                )
 
-                            logger.info(
-                                f"Cycle finished at {current_row['close_price']} on {current_row['close_time']}"
-                                f"Profit: {net_profit}%; Entry was {cycle.get("buy_price")} at {cycle.get["buy_time"]}"
-                            )
+                if rm.should_exit():
+                    net_profit = rm.profit_or_loss
+                    cycle["sell_price"] = current_row['close_price']
+                    cycle["sell_time"] = current_row['close_time']
+                    cycle["profit_loss"] = net_profit
 
-                        if net_profit > 0:
-                            self.profits += net_profit
-                        else:
-                            self.losses += net_profit
-                        if self.current_balance <= 0:
-                            logger.warning("Account liquidated")
-                            break
-                        self.current_balance = self.current_balance  + net_profit
-            if len(self.is_cycle) ==3:
-                self.trade_cycles.append(self.is_cycle)
+                    if rm.stop_loss_exit():
+                        logger.info("Exited position based on stop-loss.")
+                    elif rm.target_profit_exit():
+                        logger.info(f"Cycle finished at {current_row['close_price']} on {current_row['close_time']} | Profit: {net_profit}% | Entry: {cycle.get('buy_price')} at {cycle.get('buy_time')}")
+
+                    self.current_balance += net_profit
+                    self.profits += max(0, net_profit)
+                    self.losses += min(0, net_profit)
+                    self.trade_cycles.append(cycle)
+                    logger.info("No sell opportunity found for this sub cycle")
+
+                    if self.current_balance <= 0:
+                        logger.warning("Account liquidated")
+                        break
+                else:
+                    logger.info("No sell opportunity found for this sub cycle")
+
+            # 📌 Step 3: Reset cycle list if it reaches a limit
+            if len(self.is_cycle) == 3:
                 self.is_cycle = []
 
 
     def calculate_metrics(self):
-        """Calculate the requested performance and risk metrics."""
+        """Calculate the requested performance and risk metrics, and save trade cycles as JSON."""
         if not self.trade_cycles:
             logger.error("No trades to analyze.")
             return {}
 
-        trade_df = pd.DataFrame(self.trade_cycles)
+        # Define the file path to save the data
+        file_path = "trade_cycles.json"
 
-        # Calculate profits and losses
-        trade_df['Profit (%)'] = (
-            (trade_df['Dollar Amount End'] - trade_df['Dollar Amount Start']) / trade_df['Dollar Amount Start'] * 100
-        )
+        # Save trade cycles to JSON file
+        try:
+            with open(file_path, "w") as file:
+                json.dump(self.trade_cycles, file, indent=4, default=str)  # Convert timestamps to strings
+            logger.info(f"Trade cycles saved to {file_path}")
+        except Exception as e:
+            logger.error(f"Error saving trade cycles: {e}")
 
-        # Calculate cycle time in minutes
-        trade_df['Cycle Time'] = (
-            pd.to_datetime(trade_df['Date End']) - pd.to_datetime(trade_df['Date Start'])
-        ).dt.total_seconds() / 60
+        print(self.current_balance)
 
-        # Count longs and shorts in profitable and loss trades
-        profitable_longs = len(trade_df[(trade_df['Profit (%)'] > 0) & (trade_df['Position'] == 'LONG')])
-        profitable_shorts = len(trade_df[(trade_df['Profit (%)'] > 0) & (trade_df['Position'] == 'SHORT')])
-        loss_longs = len(trade_df[(trade_df['Profit (%)'] <= 0) & (trade_df['Position'] == 'LONG')])
-        loss_shorts = len(trade_df[(trade_df['Profit (%)'] <= 0) & (trade_df['Position'] == 'SHORT')])
-
-        # Total Trades, Win Rate, Loss Rate
-        total_trades = len(trade_df)
-        wins = trade_df[trade_df['Profit (%)'] > 0]
-        losses = trade_df[trade_df['Profit (%)'] <= 0]
-        win_rate = len(wins) / total_trades * 100 if total_trades > 0 else 0
-        loss_rate = len(losses) / total_trades * 100 if total_trades > 0 else 0
-
-        # Average Profit, Average Loss
-        avg_profit = wins['Profit (%)'].mean() if not wins.empty else 0
-        avg_loss = losses['Profit (%)'].mean() if not losses.empty else 0
-
-        # ROI and Net Profit
-        roi = (self.profits - self.initial_investment) / self.initial_investment * 100
-
-        # Average Time per Cycle
-        avg_time_per_cycle = trade_df['Cycle Time'].mean() if not trade_df['Cycle Time'].empty else 0
-
-        # Metrics Dictionary
-        metrics = {
-            'Total Trades': total_trades,
-            'Win Rate (%)': win_rate,
-            'Loss Rate (%)': loss_rate,
-            'Average Profit (%)': avg_profit,
-            'Average Loss (%)': avg_loss,
-            'ROI (%)': roi,
-            'Net Profit ($)': self.profits,
-            'Average Time per Cycle (minutes)': avg_time_per_cycle,
-            'Profitable Long Trades': profitable_longs,
-            'Profitable Short Trades': profitable_shorts,
-            'Loss Long Trades': loss_longs,
-            'Loss Short Trades': loss_shorts,
-        }
-
-        # Include detailed trades for profitable and loss trades
-        metrics['Profitable Trades'] = wins.to_dict(orient='records')
-        metrics['Loss Trades'] = losses.to_dict(orient='records')
-        metrics['Net Profit'] = self.profits
-        metrics['Net Loss'] = self.losses
+        return {"status": "success", "message": f"Trade cycles saved to {file_path}"}
 
 
-        return metrics
-
- 
     def print_metrics(self):
         """Log and print the calculated metrics."""
         metrics = self.calculate_metrics()
@@ -293,7 +258,6 @@ trading_system.fetch_data_from_db()  # Ensure data is fetched
 trading_system.run_trading_cycle()
 # Get metrics for the current month
 dm = trading_system.calculate_metrics()
-trading_system.print_metrics()
 """profits = dm["Net Profit"]
 monthly_profits.append(profits)
 losses = dm["Net Loss"]
