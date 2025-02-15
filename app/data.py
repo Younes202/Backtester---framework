@@ -115,8 +115,8 @@ class BinanceFuturesKlines:
 async def main():
     # Define parameters
     symbol = "BTCUSDT"
-    interval = "1w"  # 1-day interval
-    start_time = datetime(2020, 1, 1)
+    interval = "5m"  # 1-day interval
+    start_time = datetime(2024, 1, 1)
     end_time = datetime(2025, 1, 31, 23, 59, 59)  # Last second of Jan 31, 2025
 
     # Initialize the Binance Futures Klines class
