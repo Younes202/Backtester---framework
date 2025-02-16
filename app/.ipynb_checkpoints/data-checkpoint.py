@@ -10,7 +10,6 @@ import time  # For sleep functionality
 import asyncio
 
 
-
 class BinanceFuturesKlines:
     def __init__(self, symbol, interval, start_time, end_time):
         self.symbol = symbol
@@ -58,7 +57,7 @@ class BinanceFuturesKlines:
                 "symbol": self.symbol,
                 "interval": self.interval,
                 "startTime": int(start_time.timestamp() * 1000),  # Convert to ms
-                "limit": 1000,  # Test with a smaller limit
+                "limit": 1000,  # Maximum data points per request
             }
 
             try:
@@ -115,9 +114,10 @@ class BinanceFuturesKlines:
 async def main():
     # Define parameters
     symbol = "BTCUSDT"
-    interval = "5m"  # 1-day interval
+    interval = "1D"  # 1-minute interval
     start_time = datetime(2024, 1, 1)
     end_time = datetime(2025, 1, 31, 23, 59, 59)  # Last second of Jan 31, 2025
+
 
     # Initialize the Binance Futures Klines class
     klines_fetcher = BinanceFuturesKlines(symbol, interval, start_time, end_time)
@@ -129,6 +129,7 @@ async def main():
 # Run the async main function
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 """
 db_manager = Database()

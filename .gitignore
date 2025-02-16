@@ -4,3 +4,6 @@ venv/
 app/__pycache__
 alembic/__pycache__
 __pycache__
+futures_klines_data/
+spot_klines_data/
+.ipynb_checkpoints/
