@@ -1,6 +1,6 @@
 import httpx
 import pandas as pd
-from datetime import datetime
+from datetime import datetime,timedelta
 from loguru import logger
 import os
 from connection import get_db, Database
@@ -8,8 +8,21 @@ from model import Kline, Kline_BTC, Kline_ETH, Kline_BNB, Kline_ADA, Kline_DOT, 
 from sqlalchemy.orm import Session
 import time  # For sleep functionality
 import asyncio
+# Raw Package
 
 
+import pandas as pd
+
+#Data Source
+
+import yfinance as yf
+
+#Data viz
+
+import plotly.graph_objs as go
+
+
+import requests
 
 class BinanceFuturesKlines:
     def __init__(self, symbol, interval, start_time, end_time):
@@ -102,11 +115,11 @@ class BinanceFuturesKlines:
         return df
 
     def save_to_csv(self, df):
-        output_dir = "spot_klines_data"
+        output_dir = "spot_month_klines_data"
         os.makedirs(output_dir, exist_ok=True)
 
         # Save all data into a single file
-        file_path = os.path.join(output_dir, f"{self.symbol}_{self.interval}_{self.start_time.year}-{self.end_time.year}.csv")
+        file_path = os.path.join(output_dir, f"{self.symbol}_{self.interval}_{self.start_time.month}-{self.end_time.month}-{self.end_time.year}.csv")
         df.to_csv(file_path, mode='w', header=True, index=False)
         logger.info(f"Saved all data to {file_path}")
 
@@ -115,9 +128,9 @@ class BinanceFuturesKlines:
 async def main():
     # Define parameters
     symbol = "BTCUSDT"
-    interval = "5m"  # 1-day interval
-    start_time = datetime(2024, 1, 1)
-    end_time = datetime(2025, 1, 31, 23, 59, 59)  # Last second of Jan 31, 2025
+    interval = "1h"  # 1-day interval
+    start_time = datetime(2024, 3, 1)
+    end_time = datetime(2024, 3, 31, 23, 59, 59)  # Last second of Jan 31, 2025
 
     # Initialize the Binance Futures Klines class
     klines_fetcher = BinanceFuturesKlines(symbol, interval, start_time, end_time)
@@ -126,9 +139,29 @@ async def main():
     await klines_fetcher.fetch_and_save_klines()
 
 
-# Run the async main function
+# Run the async main function   
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+"""# Main Function to Run
+async def main():
+    # Define parameters for Alpha Vantage
+    symbol = "EUR/USD"  # Example: EUR/USD pair
+    interval = "1min"  # 1-minute interval
+    start_time = datetime(2024, 1, 1)
+    end_time = datetime(2025, 1, 31, 23, 59, 59)  # Last second of Jan 31, 2025
+    api_key = "47PD72PAH3YE5CUI"  # Replace with your Alpha Vantage API key
+
+    # Initialize the Alpha Vantage Klines class
+    klines_fetcher = AlphaVantageKlines(symbol, interval, start_time, end_time, api_key)
+
+    # Fetch and save forex data
+    await klines_fetcher.fetch_and_save_klines()
+
+# Run the async main function
+if __name__ == "__main__":
+    asyncio.run(main())"""
 
 """
 db_manager = Database()
@@ -171,4 +204,10 @@ save_csv_to_db(csv_file, db)
 # Close the session after operations
 db.close()
 # Main function for doge and save to csv
+"""
+
+
+"""
+data = yf.download(tickers='EURUSD=X', start='2024-01-01', end='2024gkogov-01-05', interval='1h')
+print(data)
 """

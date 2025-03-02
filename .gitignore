@@ -7,3 +7,7 @@ __pycache__
 futures_klines_data/
 spot_klines_data/
 .ipynb_checkpoints/
+spot_month_klines_data
+spot_klines_data
+futures_klines_data
+forex_data
