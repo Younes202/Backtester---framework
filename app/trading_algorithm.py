@@ -3,8 +3,6 @@ from loguru import logger
 from indicators import  Strategy
 
 
-
-
 def fetch_and_process_data(data, close_time, augmentation=0):
     if isinstance(data, str):
         df = pd.read_csv(data)
@@ -68,8 +66,8 @@ def backtest_multi_timeframe(df_1h, df_15m, augmentation_15m=40):
 
 
 # Example usage
-df_1h = pd.read_csv('spot_month_klines_data/BTCUSDT_1h_3-3-2024.csv')
-df_15m = pd.read_csv('spot_month_klines_data/BTCUSDT_15m_3-3-2024.csv')
+df_1h = pd.read_csv('spot_month_klines_data/BTCUSDT_1h_1-1-2024.csv')
+df_15m = pd.read_csv('spot_month_klines_data/BTCUSDT_15m_1-1-2024.csv')
 
 results = backtest_multi_timeframe(df_1h, df_15m)
 logger.info(f"Total Buy Opportunities: {len(results)}")

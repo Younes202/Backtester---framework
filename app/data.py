@@ -10,6 +10,11 @@ import time  # For sleep functionality
 import asyncio
 # Raw Package
 
+import investpy
+
+from alpha_vantage.foreignexchange import ForeignExchange
+import pandas as pd
+import time 
 
 import pandas as pd
 
@@ -123,14 +128,13 @@ class BinanceFuturesKlines:
         df.to_csv(file_path, mode='w', header=True, index=False)
         logger.info(f"Saved all data to {file_path}")
 
-
-# Main Function to Run
+"""# Main Function to Run
 async def main():
     # Define parameters
     symbol = "BTCUSDT"
     interval = "1h"  # 1-day interval
-    start_time = datetime(2024, 3, 1)
-    end_time = datetime(2024, 3, 31, 23, 59, 59)  # Last second of Jan 31, 2025
+    start_time = datetime(2025, 2, 1)
+    end_time = datetime(2025, 2, 28, 23, 59, 59)  # Last second of Jan 31, 2025
 
     # Initialize the Binance Futures Klines class
     klines_fetcher = BinanceFuturesKlines(symbol, interval, start_time, end_time)
@@ -142,7 +146,7 @@ async def main():
 # Run the async main function   
 if __name__ == "__main__":
     asyncio.run(main())
-
+"""
 
 """# Main Function to Run
 async def main():
@@ -206,8 +210,57 @@ db.close()
 # Main function for doge and save to csv
 """
 
+import akshare as ak
+import pandas as pd
 
-"""
-data = yf.download(tickers='EURUSD=X', start='2024-01-01', end='2024gkogov-01-05', interval='1h')
-print(data)
-"""
+def fetch_forex_data(pair="USDCNY", start_time="2023-01-01", end_time="2023-10-01", interval="1d"):
+    """
+    Fetches historical forex data for a specified currency pair using AKShare.
+
+    Parameters:
+        pair (str): The currency pair (e.g., "USDCNY", "USDEUR"). Default is "USDCNY".
+        start_time (str): Start time in "YYYY-MM-DD" format. Default is "2023-01-01".
+        end_time (str): End time in "YYYY-MM-DD" format. Default is "2023-10-01".
+        interval (str): Interval for data (e.g., "1d" for daily, "1h" for hourly). Default is "1d".
+
+    Returns:
+        pd.DataFrame: A DataFrame containing the historical forex data.
+    """
+    try:
+        # Convert pair to the format expected by AKShare (e.g., "USDCNY" -> "USD/CNY")
+        formatted_pair = f"{pair[:3]}/{pair[3:]}"
+
+        # Fetch historical data
+        forex_data = ak.currency_hist(
+            symbol=formatted_pair,  # Currency pair
+            period="daily",         # Period (daily, weekly, monthly)
+            start_date=start_time,  # Start date
+            end_date=end_time,      # End date
+            adjust="qfq"            # Adjustment type (qfq: no adjustment)
+        )
+
+        # Filter data based on the interval
+        if interval == "1d":
+            # Daily data is already returned by default
+            pass
+        elif interval == "1h":
+            # Resample to hourly data (if available)
+            forex_data = forex_data.resample("1H").ffill()
+        else:
+            raise ValueError("Unsupported interval. Use '1d' for daily or '1h' for hourly.")
+
+        # Return the DataFrame
+        return forex_data
+
+    except Exception as e:
+        print(f"Error fetching data: {e}")
+        return None
+
+# Example usage with default arguments
+if __name__ == "__main__":
+    # Fetch data with default parameters
+    df = fetch_forex_data()
+
+    # Display the DataFrame
+    if df is not None:
+        print(df)
