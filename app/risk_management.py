@@ -283,8 +283,6 @@ class RiskManagementD:
 
 
 
-
-
 """if __name__ == "__main__":
     # Example configuration
     risk_mgr = RiskManagement(

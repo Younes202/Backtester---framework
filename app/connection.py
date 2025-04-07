@@ -26,7 +26,6 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Generic Type for SQLAlchemy models
-
 def get_db() -> Session:
     """
     Provides a database session.
@@ -107,7 +106,6 @@ class Database:
         return False
 
 
-
 def test_connection():
    # Tests the database connection by running a simple query.
    # Returns True if the connection is successful, False otherwise.
@@ -126,3 +124,5 @@ if __name__ == "__main__":
         print("Database connection is successful!")
     else:
         print("Database connection failed.")
+
+
