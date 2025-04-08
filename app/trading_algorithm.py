@@ -1,6 +1,8 @@
 import pandas as pd
 from loguru import logger
 from indicators import  Strategy
+from risk_management import RiskManagement
+
 
 
     
@@ -70,17 +72,17 @@ def backtest_multi_timeframe(df_1d, df_1h, df_15m, augmentation_1h=24, augmentat
                                 continue
                             
                             strategy_15m = Strategy(df_15m_filtered, '15m')
-                            df_15m_filtered = strategy_15m.generate_signals() . 
+                            df_15m_filtered = strategy_15m.generate_signals()
                             logger.debug(f" dataFrame of day is like that : {df_15m_filtered}")
 
                             if df_15m_filtered['Signal'].iloc[-1] == 1:  # Buy confirmed on 15M
                                 close_time_15m = df_15m_filtered['close_time'].iloc[-1]
                                 close_price_15m = df_15m_filtered['close'].iloc[-1]
+                                logger.debug(f" dataFrame of day is like that : {df_15m_filtered.shape}")
                                 logger.success(f"Buy signal confirmed on 15M at {close_time_15m}, Price: {close_price_15m}")
-                                
                                 trades.append({'time': close_time_15m, "price": close_price_15m})
+
                                 break  # Stop at the first valid trade entry
-                break            
     return trades
  
 
@@ -88,7 +90,7 @@ def backtest_multi_timeframe(df_1d, df_1h, df_15m, augmentation_1h=24, augmentat
 df_1d = pd.read_csv('spot_klines_data/BTCUSDT_1d_2024-2025.csv')
 df_1h = pd.read_csv('spot_klines_data/BTCUSDT_1h_2024-2025.csv')
 df_15m = pd.read_csv('spot_klines_data/BTCUSDT_15m_2024-2025.csv')
-
+df_1mm = pd.read_csv('spot_klines_data/BTCUSDT_1m_2024-2025.csv')
 print(df_1d.head())
 print(df_1h.head())
 print(df_15m.head())
@@ -98,3 +100,4 @@ logger.info(f"Total Buy Opportunities: {len(results)}")
 logger.info(results)
 
 # after buy detected start searching buys and start searching a sell via risk managmnet i build before after get the righ data point to exit start from it search for buy and continue like that .
+
