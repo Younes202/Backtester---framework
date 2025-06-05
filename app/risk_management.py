@@ -265,6 +265,9 @@ class RiskManagementD:
             logger.info(f"Adjusted stop-loss price reached: {self.currentprice:.2f}. Loss: ${dollar_loss:.2f}. Total after loss: ${total_dollars_after_loss:.2f}. Exiting position.")
             return True
         return False
+    
+
+
 
     def should_exit(self):
         """Main function to determine if any exit condition is met."""

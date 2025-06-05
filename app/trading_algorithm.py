@@ -2,11 +2,10 @@ import pandas as pd
 from loguru import logger
 from indicators import  Strategy
 from risk_management import RiskManagement
-
-
+import talib
 
     
-def fetch_and_process_data(data, close_time, augmentation=0):
+def fetch_and_process_data(data, close_time, timeframe=None, augmentation=0):
     if isinstance(data, str):
         df = pd.read_csv(data)
     elif isinstance(data, pd.DataFrame):
@@ -30,74 +29,73 @@ def fetch_and_process_data(data, close_time, augmentation=0):
         logger.warning(f"No data found for close_time: {close_time}")
         return pd.DataFrame()  # Return an empty DataFrame
 
-    return df_final
+    return data
 
 
-def backtest_multi_timeframe(df_1d, df_1h, df_15m, augmentation_1h=24, augmentation_15m=4):
-    """
-    Multi-timeframe backtest using Daily (D1) for bias, 1-Hour (H1) for confirmation,
-    and 15-Minute (M15) for precise entry.
-    """
-    # Initialize and generate signals for Daily Bias (D1)
-    strategy_1d = Strategy(df_1d, '1d')
-    df_1d = strategy_1d.generate_signals()
-    logger.debug(f" dataFrame of day is like that : {df_1d["Signal"]}")
-    trades = []
-    
-    # Loop over daily signals first
-    for index_d, row_d in df_1d.iterrows():
-        if row_d['Signal'] == 1:  # Bullish bias on daily timeframe
-            logger.info(f"Bullish trend confirmed on D1 at {row_d['close_time']}")
-            close_time_d1 = row_d['close_time']
-            
-            # Process 1H Timeframe Confirmation
-            for aug_1h in range(augmentation_1h):
-                df_1h_filtered = fetch_and_process_data(df_1h, close_time_d1, aug_1h)
-                if df_1h_filtered.empty:
-                    continue
-                
-                strategy_1h = Strategy(df_1h_filtered, '1h')
-                df_1h_filtered = strategy_1h.generate_signals()
-                logger.debug(f" dataFrame of day is like that : {df_1h_filtered}")
+### ----------------------- 2. LOAD FILES & APPLY STRATEGY -----------------------------
 
-                for index_h, row_h in df_1h_filtered.iterrows():
-                    if row_h['Signal'] == 1:  # Bullish confirmation on 1H
-                        logger.info(f"Bullish trend confirmed on H1 at {row_h['close_time']}")
-                        close_time_h1 = row_h['close_time']
-                        
-                        # Process 15M Timeframe Entry
-                        for aug_15m in range(augmentation_15m):
-                            df_15m_filtered = fetch_and_process_data(df_15m, close_time_h1, aug_15m)
-                            if df_15m_filtered.empty:
-                                continue
-                            
-                            strategy_15m = Strategy(df_15m_filtered, '15m')
-                            df_15m_filtered = strategy_15m.generate_signals()
-                            logger.debug(f" dataFrame of day is like that : {df_15m_filtered}")
+# Load CSVs
+df_1d = pd.read_csv("spot_klines_data/BTCUSDT_1d_2024-2025.csv")
+df_1h = pd.read_csv("spot_klines_data/BTCUSDT_1h_2024-2025.csv")
+df_15m = pd.read_csv("spot_klines_data/BTCUSDT_15m_2024-2025.csv")
 
-                            if df_15m_filtered['Signal'].iloc[-1] == 1:  # Buy confirmed on 15M
-                                close_time_15m = df_15m_filtered['close_time'].iloc[-1]
-                                close_price_15m = df_15m_filtered['close'].iloc[-1]
-                                logger.debug(f" dataFrame of day is like that : {df_15m_filtered.shape}")
-                                logger.success(f"Buy signal confirmed on 15M at {close_time_15m}, Price: {close_price_15m}")
-                                trades.append({'time': close_time_15m, "price": close_price_15m})
+print("1D Spot Close time  ")
+print(df_1d["close_time"].head(1))
+print(df_1d["close_time"].iloc[-1])
 
-                                break  # Stop at the first valid trade entry
-    return trades
- 
+print("1H Spot Close time  ")
+print(df_1h["close_time"].head(1))
+print(df_1h["close_time"].iloc[-1])
 
-# Example usage
-df_1d = pd.read_csv('spot_klines_data/BTCUSDT_1d_2024-2025.csv')
-df_1h = pd.read_csv('spot_klines_data/BTCUSDT_1h_2024-2025.csv')
-df_15m = pd.read_csv('spot_klines_data/BTCUSDT_15m_2024-2025.csv')
-df_1mm = pd.read_csv('spot_klines_data/BTCUSDT_1m_2024-2025.csv')
+print("Spot Close time  ")
+print(df_15m["close_time"].head(1))
+print(df_15m["close_time"].iloc[-1])
+
+
+"""# Generate daily signals (D1)
+strategy_1d = Strategy(df_1d, '1d')
+df_1d = strategy_1d.generate_signals()
+logger.debug(f"Daily DataFrame Signal column: {df_1d['Signal']}")"""
+
+# Print the las1t signal
+
+
+"""
 print(df_1d.head())
 print(df_1h.head())
-print(df_15m.head())
+print(df_15m.head())"""
 
-results = backtest_multi_timeframe(df_1d, df_1h, df_15m)
+"""results = backtest_multi_timeframe(df_1d, df_1h, df_15m, df_1mm)
 logger.info(f"Total Buy Opportunities: {len(results)}")
-logger.info(results)
-
+logger.info(results)"""
 # after buy detected start searching buys and start searching a sell via risk managmnet i build before after get the righ data point to exit start from it search for buy and continue like that .
+#
 
+"""
+                           i = 0
+                            while True:
+                                df_1m_filtered = fetch_and_process_data(df_1m, close_time, augmentation=i)
+                                current_price = df_1m_filtered['close']
+                                latest_atr = df_1m_filtered['atr']
+                                close_time_1m = df_1m_filtered['close_time']
+                                i = i + 1
+                                risk_manager = RiskManagement(priceorder=close_price, currentprice=current_price, target_profit=1, stoploss=0.5, dollar_investment=600, atr=latest_atr, fees=0.1)
+
+                                if risk_manager.should_exit():
+                                    print("✅ Exit condition met on 1m data.")
+                                    if risk_manager.profit_or_loss is not None:
+                                        if risk_manager.profit_or_loss > 0:
+                                            print("📈 Gain Confirmed.")
+                                            trades.append({"buy price": close_price, "sell price": current_price, "profit_or_loss": "profit"})
+
+                                        else:
+                                            print("📉 Loss Confirmed.")
+                                            trades.append({"buy price": close_price, "sell price": current_price, "profit_or_loss": "loss"})
+
+                                        logger.success(f"Sell signal confirmed at {close_time_1m}, Price: {current_price}")
+                                        logger.info(f"Trade executed: Buy at {trades[-1]['buy price']}, Sell at {trades[-1]['sell price']}")
+                                        logger.info(f"Trade details: {trades[-1]}")
+                                        break  # Exit the risk management loop once an exit is found
+                                else:
+                                    print("⏳ Hold the position in 1m risk management.")
+""" 

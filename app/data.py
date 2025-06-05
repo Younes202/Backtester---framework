@@ -100,7 +100,7 @@ class BinanceSpotKlines:
         return df
 
     def save_to_csv(self, df):
-        output_dir = "spot_month_klines_data"
+        output_dir = "spot_klines_data"
         os.makedirs(output_dir, exist_ok=True)
 
         # Save all data into a single file
@@ -108,13 +108,15 @@ class BinanceSpotKlines:
         df.to_csv(file_path, mode='w', header=True, index=False)
         logger.info(f"Saved all data to {file_path}")
 
+
+
 # Main Function to Run
 async def main():
     # Define parameters
     symbol = "BTCUSDT"
-    interval = "1d"  # 1-day interval
-    start_time = datetime(2025, 1, 1)
-    end_time = datetime(2025, 1, 30, 23, 59, 59)  # Last second of March 29, 2025
+    interval = "15m"  # 1-day interval
+    start_time = datetime(2023, 1, 1)
+    end_time = datetime(2025, 4, 30, 23, 59, 59)  # Last second of May 29, 2025
 
     # Initialize the Binance Spot Klines class
     klines_fetcher = BinanceSpotKlines(symbol, interval, start_time, end_time)
