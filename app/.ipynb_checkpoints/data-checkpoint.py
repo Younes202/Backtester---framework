@@ -1,22 +1,21 @@
 import httpx
 import pandas as pd
-from datetime import datetime
+from datetime import datetime,timedelta
 from loguru import logger
 import os
 from connection import get_db, Database
 from model import Kline, Kline_BTC, Kline_ETH, Kline_BNB, Kline_ADA, Kline_DOT, Kline_BTCS
 from sqlalchemy.orm import Session
-import time  # For sleep functionality
 import asyncio
+# Raw Package
 
-
-class BinanceFuturesKlines:
+class BinanceSpotKlines:
     def __init__(self, symbol, interval, start_time, end_time):
         self.symbol = symbol
         self.interval = interval
         self.start_time = start_time
         self.end_time = end_time
-        logger.info(f"Initialized BinanceFuturesKlines with symbol={symbol}, interval={interval}")
+        logger.info(f"Initialized BinanceSpotKlines with symbol={symbol}, interval={interval}")
 
     async def fetch_and_save_klines(self):
         try:
@@ -57,7 +56,7 @@ class BinanceFuturesKlines:
                 "symbol": self.symbol,
                 "interval": self.interval,
                 "startTime": int(start_time.timestamp() * 1000),  # Convert to ms
-                "limit": 1000,  # Maximum data points per request
+                "limit": 1000,  # Test with a smaller limit
             }
 
             try:
@@ -73,7 +72,7 @@ class BinanceFuturesKlines:
                 return klines
 
             except httpx.RequestError as e:
-                logger.error(f"Error fetching data from Binance Futures API: {e}")
+                logger.error(f"Error fetching data from Binance Spot API: {e}")
                 raise
 
     def convert_data_to_dataframe(self, data):
@@ -105,33 +104,33 @@ class BinanceFuturesKlines:
         os.makedirs(output_dir, exist_ok=True)
 
         # Save all data into a single file
-        file_path = os.path.join(output_dir, f"{self.symbol}_{self.interval}_{self.start_time.year}-{self.end_time.year}.csv")
+        file_path = os.path.join(output_dir, f"{self.symbol}_{self.interval}_{self.start_time.month}-{self.end_time.month}-{self.end_time.year}.csv")
         df.to_csv(file_path, mode='w', header=True, index=False)
         logger.info(f"Saved all data to {file_path}")
+
 
 
 # Main Function to Run
 async def main():
     # Define parameters
     symbol = "BTCUSDT"
-    interval = "1D"  # 1-minute interval
-    start_time = datetime(2024, 1, 1)
-    end_time = datetime(2025, 1, 31, 23, 59, 59)  # Last second of Jan 31, 2025
+    interval = "15m"  # 1-day interval
+    start_time = datetime(2023, 1, 1)
+    end_time = datetime(2025, 4, 30, 23, 59, 59)  # Last second of May 29, 2025
 
-
-    # Initialize the Binance Futures Klines class
-    klines_fetcher = BinanceFuturesKlines(symbol, interval, start_time, end_time)
+    # Initialize the Binance Spot Klines class
+    klines_fetcher = BinanceSpotKlines(symbol, interval, start_time, end_time)
 
     # Fetch and save klines
     await klines_fetcher.fetch_and_save_klines()
 
 
-# Run the async main function
+
+# Run the async main function   
 if __name__ == "__main__":
     asyncio.run(main())
 
-
-"""
+""""
 db_manager = Database()
 
 def save_csv_to_db(csv_file: str, db: Session):

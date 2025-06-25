@@ -1,7 +1,7 @@
 from loguru import logger
 
 
-class RiskManagementF:
+class RiskManagementFutures:
     def __init__(self, entry_price, current_price, risk_percent, profit_percent, 
                  leverage, initial_margin, atr, fees=0.0002, position_type="LONG"):
         """
@@ -203,6 +203,85 @@ class RiskManagement:
             return True  # Exit due to reaching target profit
 
         return False  # No exit condition met, hold the position
+
+
+class MultiTimeframeRiskManager:
+    def __init__(
+        self,
+        entry_price,
+        current_price,
+        dollar_investment,
+        target_profit_pct,
+        stop_loss_pct,
+        atr_1d,
+        atr_1h,
+        atr_15m,
+        atr_weighting=None  # dict like {'1d':0.5, '1h':0.3, '15m':0.2}
+    ):
+        self.entry_price = entry_price
+        self.current_price = current_price
+        self.dollar_investment = dollar_investment
+        self.target_profit_pct = target_profit_pct
+        self.stop_loss_pct = stop_loss_pct
+        self.atr_1d = atr_1d
+        self.atr_1h = atr_1h
+        self.atr_15m = atr_15m
+
+        # Default weighting if none given (equal weight)
+        if atr_weighting is None:
+            self.atr_weighting = {'1d': 0.5, '1h': 0.3, '15m': 0.2}
+        else:
+            self.atr_weighting = atr_weighting
+
+        self.profit_or_loss = None
+
+    def combined_atr(self):
+        """Calculate combined ATR based on weighting"""
+        combined = (
+            self.atr_1d * self.atr_weighting.get('1d', 0) +
+            self.atr_1h * self.atr_weighting.get('1h', 0) +
+            self.atr_15m * self.atr_weighting.get('15m', 0)
+        )
+        return combined
+
+    def calculate_stop_loss_price(self):
+        """Calculate dynamic stop loss price using combined ATR"""
+        combined_atr = self.combined_atr()
+        sl_price_pct = self.stop_loss_pct / 100
+        # Adjust stop loss by combined ATR (you can tune multiplier here)
+        adjusted_sl = self.entry_price - (sl_price_pct * self.entry_price) - (combined_atr * 0.5)
+        return adjusted_sl
+
+    def calculate_take_profit_price(self):
+        """Calculate dynamic take profit price using combined ATR"""
+        combined_atr = self.combined_atr()
+        tp_price_pct = self.target_profit_pct / 100
+        # Adjust take profit by combined ATR (tune multiplier here)
+        adjusted_tp = self.entry_price + (tp_price_pct * self.entry_price) + (combined_atr * 0.5)
+        return adjusted_tp
+
+    def check_stop_loss(self):
+        sl_price = self.calculate_stop_loss_price()
+        if self.current_price <= sl_price:
+            self.profit_or_loss = (self.current_price - self.entry_price) * (self.dollar_investment / self.entry_price)
+            return True
+        return False
+
+    def check_take_profit(self):
+        tp_price = self.calculate_take_profit_price()
+        if self.current_price >= tp_price:
+            self.profit_or_loss = (self.current_price - self.entry_price) * (self.dollar_investment / self.entry_price)
+            return True
+        return False
+
+    def should_exit(self):
+        if self.check_stop_loss():
+            return 'stop_loss', self.profit_or_loss
+        elif self.check_take_profit():
+            return 'take_profit', self.profit_or_loss
+        else:
+            return 'hold', None
+
 
 
 class RiskManagementD:

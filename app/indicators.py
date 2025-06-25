@@ -1,80 +1,291 @@
-from ta.trend import EMAIndicator, MACD
+from ta.trend import EMAIndicator, MACD, ADXIndicator
 from ta.momentum import RSIIndicator
 from ta.volume import VolumeWeightedAveragePrice
+from ta.volatility import BollingerBands
 import pandas as pd
 import talib
-from ta.trend import EMAIndicator, MACD
-from ta.momentum import RSIIndicator
-from ta.volume import VolumeWeightedAveragePrice
-import talib
+import numpy as np
+from ta.volatility import AverageTrueRange
 
-### ----------------------- 1. STRATEGY CLASS -----------------------------
 
 class Strategy:
-    def __init__(self, data, timeframe_type):
+        def __init__(self, data, timeframe_type):
+            self.data = data.copy()
+            self.timeframe_type = timeframe_type
+            self.data['timestamp'] = pd.to_datetime(self.data['open_time'])
+
+        def calculate_indicators(self):
+            self.data['EMA50'] = EMAIndicator(close=self.data['close'], window=50).ema_indicator()
+            self.data['EMA200'] = EMAIndicator(close=self.data['close'], window=200).ema_indicator()
+            self.data['RSI'] = RSIIndicator(close=self.data['close'], window=14).rsi()
+            
+            macd = MACD(close=self.data['close'], window_slow=12, window_fast=6, window_sign=5)
+            self.data['MACD'] = macd.macd()
+            self.data['MACD_Signal'] = macd.macd_signal()
+            
+            self.data['ADX'] = ADXIndicator(high=self.data['high'], low=self.data['low'], close=self.data['close'], window=14).adx()
+            
+            bb = BollingerBands(close=self.data['close'], window=20, window_dev=2)
+            self.data['BB_Width'] = bb.bollinger_hband() - bb.bollinger_lband()
+
+            if all(col in self.data.columns for col in ['high', 'low', 'close', 'volume']):
+                self.data['VWAP'] = VolumeWeightedAveragePrice(
+                    high=self.data['high'], low=self.data['low'],
+                    close=self.data['close'], volume=self.data['volume'], window=20
+                ).volume_weighted_average_price()
+
+            self.data['Volume_OK'] = self.data['volume'] > self.data['volume'].rolling(20).mean()
+            self.data['Volatility_OK'] = self.data['BB_Width'] > self.data['BB_Width'].rolling(20).mean()
+            self.data['Trend_Strength'] = self.data['ADX'] > 20
+            self.data['Bullish_Engulfing'] = talib.CDLENGULFING(
+                self.data['open'], self.data['high'], self.data['low'], self.data['close']
+            ) > 0
+
+            return self.data
+
+        def detect_fvg(self):
+            self.data['FVG'] = (
+                (self.data['low'].shift(1) > self.data['high'].shift(-1)) |
+                (self.data['high'].shift(1) < self.data['low'].shift(-1))
+            )
+            return self.data
+
+        def detect_cisd(self):
+            self.data['Higher_High'] = self.data['high'] > self.data['high'].shift(1)
+            self.data['Higher_Low'] = self.data['low'] > self.data['low'].shift(1)
+            self.data['Bullish_Structure'] = self.data['Higher_High'] & self.data['Higher_Low']
+            self.data['Lower_High'] = self.data['high'] < self.data['high'].shift(1)
+            self.data['Lower_Low'] = self.data['low'] < self.data['low'].shift(1)
+            self.data['Bearish_Structure'] = self.data['Lower_High'] & self.data['Lower_Low']
+            self.data['atr'] = talib.ATR(self.data['high'], self.data['low'], self.data['close'], timeperiod=14)
+            return self.data
+
+        def generate_signals(self):
+            self.calculate_indicators()
+            self.detect_fvg()
+            self.detect_cisd()
+            self.data['Signal'] = 0
+
+            if self.timeframe_type == '1d':
+                self.data['Bias'] = (
+                    (self.data['EMA50'] > self.data['EMA200']) &
+                    (self.data['RSI'] > 55) &
+                    (self.data['close'] > self.data['VWAP']) &
+                    (self.data['MACD'] > self.data['MACD_Signal'])
+                ).astype(int)
+
+            elif self.timeframe_type == '1h':
+                self.data['Confirm'] = (
+                    self.data['Bullish_Structure'] &
+                    (self.data['MACD'] > self.data['MACD_Signal']) &
+                    (self.data['RSI'].diff() > 0)  # RSI trending up
+                ).astype(int)
+
+            elif self.timeframe_type == '15m':
+                self.data['Entry'] = (
+                    (self.data['close'] > self.data['EMA50']) &
+                    (self.data['Bullish_Structure']) &
+                    (self.data['MACD'] > self.data['MACD_Signal']) &
+                    (self.data['atr'] < self.data['atr'].rolling(20).mean())  # avoids volatile chop
+                ).astype(int)
+
+            self.data.dropna(inplace=True)
+            columns = ['timestamp', 'open', 'high', 'low', 'close', 'ATR', 'Entry', 'Confirm', 'Bias']
+            return  self.data[columns]
+        
+
+class FuturesStrategyScalping:
+    def __init__(self, data):
         self.data = data.copy()
-        self.timeframe_type = timeframe_type
-        self.data['timestamp'] = pd.to_datetime(self.data['open_time'])
+        # Ensure timestamp exists
+        if 'timestamp' not in self.data.columns:
+            self.data['timestamp'] = pd.to_datetime(self.data['close_time'])
+        
+        # Convert all numeric columns (critical!)
+        self.data[['open','high','low','close','volume']] = \
+            self.data[['open','high','low','close','volume']].apply(pd.to_numeric, errors='coerce')
 
     def calculate_indicators(self):
-        self.data['EMA50'] = EMAIndicator(close=self.data['close'], window=50).ema_indicator()
-        self.data['EMA200'] = EMAIndicator(close=self.data['close'], window=200).ema_indicator()
-        self.data['RSI'] = RSIIndicator(close=self.data['close'], window=14).rsi()
-        macd = MACD(close=self.data['close'], window_slow=12, window_fast=6, window_sign=5)
-        self.data['MACD'] = macd.macd()
-        self.data['MACD_Signal'] = macd.macd_signal()
-
-        if all(col in self.data.columns for col in ['high', 'low', 'close', 'volume']):
-            self.data['VWAP'] = VolumeWeightedAveragePrice(
-                high=self.data['high'], low=self.data['low'],
-                close=self.data['close'], volume=self.data['volume'], window=20
-            ).volume_weighted_average_price()
-        return self.data
-
-    def detect_fvg(self):
-        self.data['FVG'] = (
-            (self.data['low'].shift(1) > self.data['high'].shift(-1)) |
-            (self.data['high'].shift(1) < self.data['low'].shift(-1))
-        )
-        return self.data
-
-    def detect_cisd(self):
-        self.data['Higher_High'] = self.data['high'] > self.data['high'].shift(1)
-        self.data['Higher_Low'] = self.data['low'] > self.data['low'].shift(1)
-        self.data['Bullish_Structure'] = self.data['Higher_High'] & self.data['Higher_Low']
-        self.data['Lower_High'] = self.data['high'] < self.data['high'].shift(1)
-        self.data['Lower_Low'] = self.data['low'] < self.data['low'].shift(1)
-        self.data['Bearish_Structure'] = self.data['Lower_High'] & self.data['Lower_Low']
-        self.data['atr'] = talib.ATR(self.data['high'], self.data['low'], self.data['close'], timeperiod=14)
+        # Ultra-responsive indicators
+        self.data['EMA5'] = self.data['close'].ewm(span=5, adjust=False).mean()  # Faster than EMA9
+        self.data['RSI_3'] = RSIIndicator(close=self.data['close'], window=3).rsi()  # Hyper-sensitive
+        
+        # Smart volume filter (adapts to market)
+        if 'volume' in self.data.columns:
+            # Use rolling percentile instead of mean
+            self.data['Vol_P25'] = self.data['volume'].rolling(10).quantile(0.25)
+            self.data['Volume_Active'] = self.data['volume'] > self.data['Vol_P25'] * 1.1
+        else:
+            self.data['Volume_Active'] = True
+            
         return self.data
 
     def generate_signals(self):
         self.calculate_indicators()
-        self.detect_fvg()
-        self.detect_cisd()
-        self.data['Signal'] = 0
-
-        if self.timeframe_type == '1d':
-            self.data['Bias'] = (
-                (self.data['EMA50'] > self.data['EMA200']) &
-                (self.data['RSI'] > 50) &
-                (self.data['close'] > self.data['VWAP'])
-            ).astype(int)
-
-        elif self.timeframe_type == '1h':
-            self.data['Confirm'] = (
-                (~self.data['FVG']) & self.data['Bullish_Structure']
-            ).astype(int)
-
-        elif self.timeframe_type == '15m':
-            self.data['Entry'] = (
-                (self.data['close'] > self.data['EMA50']) &
-                (self.data['RSI'] > 50) &
-                (self.data['MACD'] > self.data['MACD_Signal']) &
-                (self.data['Bullish_Structure'])
-            ).astype(int)
-
-        self.data.dropna(inplace=True)
+        
+        # Simplified conditions (tested on BTC 3m)
+        self.data['Signal'] = 0  # Default to no signal
+        
+        # LONG: Price above EMA & RSI not overbought
+        self.data.loc[
+            (self.data['close'] > self.data['EMA5']) & 
+            (self.data['RSI_3'] < 60),  # Relaxed from 40
+            'Signal'
+        ] = 1
+        
+        # SHORT: Price below EMA & RSI not oversold
+        self.data.loc[
+            (self.data['close'] < self.data['EMA5']) & 
+            (self.data['RSI_3'] > 40),  # Relaxed from 60
+            'Signal'
+        ] = -1
+        
+        # Remove volume filter if still no signals
+        if self.data['Signal'].abs().sum() == 0:
+            print("⚠️ No signals - removing volume filter")
+            self.data['Signal'] = 0
+            self.data.loc[
+                (self.data['close'] > self.data['EMA5']) & 
+                (self.data['RSI_3'] < 60), 
+                'Signal'
+            ] = 1
+            self.data.loc[
+                (self.data['close'] < self.data['EMA5']) & 
+                (self.data['RSI_3'] > 40), 
+                'Signal'
+            ] = -1
+        
+        # Final check
+        if self.data['Signal'].abs().sum() == 0:
+            print("❌ CRITICAL: Still no signals - data/indicator issue")
+            print("Sample indicators:")
+            print(self.data[['timestamp','close','EMA5','RSI_3']].tail(10))
+        
         return self.data
 
 
+
+
+class MultiTimeframeStrategy:
+    def __init__(self, data_15m, data_1h):
+        """
+        Enhanced strategy class with complete indicator calculation
+        data_15m: DataFrame with 15-minute OHLCV data (must contain close_time)
+        data_1h: DataFrame with 1-hour OHLCV data (must contain close_time)
+        """
+        # Clean and prepare data
+        self.data_15m = self._prepare_data(data_15m.copy(), '15m')
+        self.data_1h = self._prepare_data(data_1h.copy(), '1h')
+        
+    def _prepare_data(self, df, timeframe):
+        """Prepare and validate data"""
+        # Check essential columns
+        essential_cols = ['open', 'high', 'low', 'close', 'volume', 'close_time']
+        missing_cols = [col for col in essential_cols if col not in df.columns]
+        if missing_cols:
+            raise ValueError(f"Missing columns in {timeframe} data: {missing_cols}")
+        
+        # Convert to datetime if needed
+        if not pd.api.types.is_datetime64_any_dtype(df['close_time']):
+            df['close_time'] = pd.to_datetime(df['close_time'])
+        
+        # Clean data
+        df_clean = df.dropna(subset=essential_cols, how='any')
+        df_clean = df_clean[df_clean['volume'] > 0]
+        df_clean = df_clean.sort_values('close_time')
+        
+        # Validate
+        if df_clean.empty:
+            raise ValueError(f"{timeframe} data is empty after cleaning")
+        if len(df_clean) < 50:
+            print(f"Warning: {timeframe} data has only {len(df_clean)} points")
+            
+        return df_clean.reset_index(drop=True)
+    
+    def calculate_15m_indicators(self):
+        """Calculate 15m timeframe indicators"""
+        df = self.data_15m
+        
+        # EMAs
+        df['EMA9_15m'] = EMAIndicator(df['close'], 9).ema_indicator()
+        df['EMA21_15m'] = EMAIndicator(df['close'], 21).ema_indicator()
+        
+        # MACD (requires minimum 26 periods)
+        if len(df) >= 26:
+            macd = MACD(df['close'], window_slow=26, window_fast=12, window_sign=9)
+            df['MACD_15m'] = macd.macd()
+            df['MACD_Signal_15m'] = macd.macd_signal()
+            df['MACD_Hist_15m'] = macd.macd_diff()
+        else:
+            df[['MACD_15m', 'MACD_Signal_15m', 'MACD_Hist_15m']] = np.nan
+        
+        # RSI (requires minimum 14 periods)
+        df['RSI_14_15m'] = RSIIndicator(df['close'], 14).rsi() if len(df) >= 14 else np.nan
+        
+        # ATR (requires minimum 14 periods)
+        df['ATR_15m'] = AverageTrueRange(
+            high=df['high'],
+            low=df['low'],
+            close=df['close'],
+            window=14
+        ).average_true_range() if len(df) >= 14 else np.nan
+        
+        return df.dropna().copy()
+        
+    def calculate_1h_indicators(self):
+        """Calculate 1h timeframe indicators"""
+        df = self.data_1h
+        
+        # EMAs
+        df['EMA20_1h'] = EMAIndicator(df['close'], 20).ema_indicator()
+        df['EMA50_1h'] = EMAIndicator(df['close'], 50).ema_indicator()
+        df['EMA200_1h'] = EMAIndicator(df['close'], 200).ema_indicator() if len(df) >= 200 else np.nan
+        
+        # MACD
+        if len(df) >= 26:
+            macd = MACD(df['close'], window_slow=26, window_fast=12, window_sign=9)
+            df['MACD_1h'] = macd.macd()
+            df['MACD_Signal_1h'] = macd.macd_signal()
+            df['MACD_Hist_1h'] = macd.macd_diff()
+        else:
+            df[['MACD_1h', 'MACD_Signal_1h', 'MACD_Hist_1h']] = np.nan
+        
+        # RSI
+        df['RSI_14_1h'] = RSIIndicator(df['close'], 14).rsi() if len(df) >= 14 else np.nan
+        df['RSI_7_1h'] = RSIIndicator(df['close'], 7).rsi() if len(df) >= 7 else np.nan
+        
+        # ATR
+        df['ATR_1h'] = AverageTrueRange(
+            high=df['high'],
+            low=df['low'],
+            close=df['close'],
+            window=14
+        ).average_true_range() if len(df) >= 14 else np.nan
+        
+        return df.dropna().copy()
+        
+    def calculate_all_indicators(self):
+        """Calculate indicators for both timeframes"""
+        df_15m = self.calculate_15m_indicators()
+        df_1h = self.calculate_1h_indicators()
+        
+        if df_15m.empty or df_1h.empty:
+            raise ValueError("Insufficient data after indicator calculation")
+            
+        return df_15m, df_1h
+
+# Usage Example:
+
+"""
+if __name__ == "__main__":
+    # Assuming you have data_15m and data_1h DataFrames
+    strategy = MultiTimeframeStrategy(data_15m, data_1h)
+    data_15m_indicators, data_1h_indicators = strategy.calculate_all_indicators()
+    
+    print("15m Data with Indicators:")
+    print(data_15m_indicators[['close_time', 'close', 'EMA9_15m', 'EMA21_15m', 'RSI_14_15m']].tail())
+    
+    print("\n1h Data with Indicators:")
+    print(data_1h_indicators[['close_time', 'close', 'EMA20_1h', 'EMA50_1h', 'RSI_14_1h']].tail())
+
+"""
