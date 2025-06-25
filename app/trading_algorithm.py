@@ -1,5 +1,5 @@
-from app.data.futures_strategy_scalping import FuturesStrategyScalping
-from app.data.risk_management import RiskManagement
+from indicators import FuturesStrategyScalping
+from risk_management import RiskManagement
 
 
 from loguru import logger
@@ -8,6 +8,9 @@ import pandas as pd
 
 # Load file 3m timframe for btc/usdt contract  
 df_3min = pd.read_csv('futures-klines/btcusdt_3m_2024-06-22_2025-06-22.csv')
+df_3min = pd.read_csv('futures-klines/btcusdt_3m_2024-06-22_2025-06-22.csv')
+
+
 
 
 # this function fetches the most recent data from a CSV file based on a target timestamp
@@ -77,3 +80,7 @@ def backtest_futures_strategy_scalping(df, tp=0.5, sl=0.3):
             logger.info(f"No signal generated at {df['timestamp'].iloc[i]}")
 
     return signals
+
+
+signals = backtest_futures_strategy_scalping(df_3min)
+print(signals)
