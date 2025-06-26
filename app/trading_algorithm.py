@@ -8,9 +8,7 @@ import pandas as pd
 
 # Load file 3m timframe for btc/usdt contract  
 df_3min = pd.read_csv('futures-klines/btcusdt_3m_2024-06-22_2025-06-22.csv')
-df_3min = pd.read_csv('futures-klines/btcusdt_3m_2024-06-22_2025-06-22.csv')
-
-
+df_1min = pd.read_csv('futures-klines/btcusdt_1_2024-06-22_2025-06-22.csv')
 
 
 # this function fetches the most recent data from a CSV file based on a target timestamp
@@ -47,7 +45,6 @@ def backtest_futures_strategy_scalping(df, tp=0.5, sl=0.3):
         df (pd.DataFrame): DataFrame containing historical data with a 'timestamp' column.
         tp (float): Take profit value (not used in this function, placeholder for future use).
         sl (float): Stop loss value (not used in this function, placeholder for future use).
-
     Returns:
         List[dict]: List of signal dictionaries with timestamp, signal, and close price.
     """
@@ -76,6 +73,22 @@ def backtest_futures_strategy_scalping(df, tp=0.5, sl=0.3):
                 'signal': last_signal,
                 'close': df['close'].iloc[i]
             })
+            priceorder = df['close'].iloc[i]
+            currentprice = df['close'].iloc[i]
+            atr = df['atr'].iloc[i] if 'atr' in df.columns else 0.0  # Ensure ATR is available
+            target_profit = tp
+            stoploss = sl
+            dollar_investment = 1000  # Example investment amount
+            while True:
+                # Risk management logic can be added here
+                risk_management = RiskManagement(priceorder, currentprice, target_profit, stoploss, dollar_investment, atr, fees=0.1)
+                risk_management.set_stop_loss(sl)
+                risk_management.set_take_profit(tp)
+                # For now, we just log the stop loss and take profit values
+                logger.info(f"Stop Loss set to {sl}, Take Profit set to {tp}")
+                break
+
+
         else:
             logger.info(f"No signal generated at {df['timestamp'].iloc[i]}")
 

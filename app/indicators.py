@@ -109,7 +109,9 @@ class FuturesStrategyScalping:
         # Ultra-responsive indicators
         self.data['EMA5'] = self.data['close'].ewm(span=5, adjust=False).mean()  # Faster than EMA9
         self.data['RSI_3'] = RSIIndicator(close=self.data['close'], window=3).rsi()  # Hyper-sensitive
-        
+        # ATR - Average True Range
+        atr = AverageTrueRange(high=self.data['high'], low=self.data['low'], close=self.data['close'], window=14)
+        self.data['ATR'] = atr.average_true_range()
         # Smart volume filter (adapts to market)
         if 'volume' in self.data.columns:
             # Use rolling percentile instead of mean
