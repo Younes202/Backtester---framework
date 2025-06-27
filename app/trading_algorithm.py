@@ -1,5 +1,5 @@
 from indicators import FuturesStrategyScalping
-from risk_management import RiskManagement
+from risk_management import RiskManagementFutures
 
 
 from loguru import logger
@@ -17,8 +17,11 @@ def fetch_recent_data_from_csv(
     target_timestamp,
     n_points=40,
     augmentation_next=0
-):
-    # Load and prepare
+):  
+    """
+    Fetches n_points rows before or at the target_timestamp, and if augmentation_next > 0,
+    adds that many rows strictly after the target_timestamp.
+    """
     df = pd.read_csv(csv_path)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values('timestamp').reset_index(drop=True)
@@ -26,38 +29,59 @@ def fetch_recent_data_from_csv(
     # Convert target timestamp
     target_dt = pd.to_datetime(target_timestamp)
 
-    # Fetch rows before or at the target
-    df_before = df[df['timestamp'] <= target_dt].tail(n_points)
+    # Find the index of the first row with timestamp >= target_dt
+    idx = df[df['timestamp'] >= target_dt].index
+    if len(idx) == 0:
+        # If target timestamp is after all data, just return last n_points
+        df_before = df.tail(n_points)
+        df_after = pd.DataFrame()
+    else:
+        idx = idx[0]
+        # Get n_points rows before or at the target timestamp
+        start_idx = max(0, idx - n_points)
+        df_before = df.iloc[start_idx:idx]
+        # Optionally include the row at target_dt if it matches exactly
+        if df.iloc[idx]['timestamp'] == target_dt:
+            df_before = pd.concat([df_before, df.iloc[[idx]]])
+            idx += 1  # Move index forward for after-data
 
-    # Fetch next rows strictly after the target
-    df_after = df[df['timestamp'] > target_dt].head(augmentation_next)
+        # Get augmentation_next rows after the target timestamp
+        df_after = df.iloc[idx:idx + augmentation_next]
 
     # Combine and return
     df_result = pd.concat([df_before, df_after]).reset_index(drop=True)
     return df_result
 
 
-def backtest_futures_strategy_scalping(df, tp=0.5, sl=0.3):
+def backtest_futures_strategy_scalping(tp=0.5, sl=0.3):
     """
     Backtest the FuturesStrategyScalping strategy on the provided DataFrame.
 
     Args:
-        df (pd.DataFrame): DataFrame containing historical data with a 'timestamp' column.
         tp (float): Take profit value (not used in this function, placeholder for future use).
         sl (float): Stop loss value (not used in this function, placeholder for future use).
     Returns:
         List[dict]: List of signal dictionaries with timestamp, signal, and close price.
     """
     signals = []
-    for i in range(20, len(df)):
+    time_considered = '2024-06-22 23:42:00'
+    df_path = 'futures-klines/btcusdt_3m_2024-06-22_2025-06-22.csv'
+    df_path_1m = 'futures-klines/btcusdt_1_2024-06-22_2025-06-22.csv'
+
+    while True:
         # Fetch the most recent data from the CSV file
         df_recent = fetch_recent_data_from_csv(
-            csv_path='futures-klines/btcusdt_3m_2024-06-22_2025-06-22.csv',
-            target_timestamp=df['timestamp'].iloc[i],
+            csv_path=df_path,
+            target_timestamp=time_considered,
             n_points=40,
             augmentation_next=0
         )
-        logger.info(f"Fetched {len(df_recent)} rows for backtesting at timestamp {df['timestamp'].iloc[i]}")
+
+        if df_recent.empty:
+            logger.warning("No data fetched for the given timestamp.")
+            break
+
+        logger.info(f"Fetched {len(df_recent)} rows for backtesting at timestamp {time_considered}")
 
         # Apply the FuturesStrategyScalping strategy
         strategy = FuturesStrategyScalping(df_recent)
@@ -65,35 +89,77 @@ def backtest_futures_strategy_scalping(df, tp=0.5, sl=0.3):
 
         # Use the last signal from the generated signals
         last_signal = df_signals['Signal'].iloc[-1] if not df_signals.empty else 0
-
+        print("Last Signal is : ", last_signal)
         if last_signal != 0:
-            logger.info(f"Signal generated at {df['timestamp'].iloc[i]}: {last_signal}")
+            logger.info(f"Signal generated at {df_signals['timestamp'].iloc[-1]}: {last_signal}")
             signals.append({
-                'timestamp': df['timestamp'].iloc[i],
+                'timestamp entry': df_signals['timestamp'].iloc[-1],
                 'signal': last_signal,
-                'close': df['close'].iloc[i]
+                'price entry': df_signals['close'].iloc[-1]
             })
-            priceorder = df['close'].iloc[i]
-            currentprice = df['close'].iloc[i]
-            atr = df['atr'].iloc[i] if 'atr' in df.columns else 0.0  # Ensure ATR is available
+            priceorder = df_signals['close'].iloc[-1]
             target_profit = tp
             stoploss = sl
-            dollar_investment = 1000  # Example investment amount
-            while True:
-                # Risk management logic can be added here
-                risk_management = RiskManagement(priceorder, currentprice, target_profit, stoploss, dollar_investment, atr, fees=0.1)
-                risk_management.set_stop_loss(sl)
-                risk_management.set_take_profit(tp)
-                # For now, we just log the stop loss and take profit values
-                logger.info(f"Stop Loss set to {sl}, Take Profit set to {tp}")
-                break
+            position_type = last_signal
 
+            # Start from the next timestamp after entry
+            entry_time = df_signals['timestamp'].iloc[-1]
+            i = 1
+            exit_found = False
+
+            while not exit_found:
+                # Fetch the next i-th row after entry_time
+                df_1min = fetch_recent_data_from_csv(
+                    csv_path=df_path_1m,
+                    target_timestamp=entry_time,
+                    n_points=30,
+                    augmentation_next=i
+                )
+                if df_1min.empty or len(df_1min) <= 30:
+                    logger.warning("No more data to check for exit.")
+                    break
+
+                # Only consider the new row for exit logic
+                df_new = df_1min.iloc[-1:]
+                strategy = FuturesStrategyScalping(df_1min)
+                df_signals = strategy.generate_signals()
+                atr = df_signals['ATR'].iloc[-1]
+                currentprice = df_new['close'].iloc[-1]
+
+                risk_management = RiskManagementFutures(
+                    priceorder, currentprice, stoploss, target_profit, atr, position_type,
+                    leverage=1, initial_margin=1000, fees=0.0002
+                )
+                exit_status = risk_management.should_exit()
+                if exit_status:
+                    pnl = risk_management.calculate_pnl(risk_management.current_price)
+
+                    logger.info(f"Exit condition met at {df_new['timestamp'].iloc[-1]}")
+                    if exit_status == "LOSS":
+                        print(f"🔴 STOP LOSS EXIT | Loss: ${abs(pnl):.2f}")
+                    elif exit_status == "PROFIT":
+                        print(f"🟢 TAKE PROFIT EXIT | Profit: ${pnl:.2f}")
+                    else:
+                        print(f"💥 LIQUIDATION | Loss: ${abs(pnl):.2f}")
+
+                    time_considered = df_new['timestamp'].iloc[-1] + pd.Timedelta(minutes=3)
+                    signals.append({
+                        'timestamp exit': df_new['timestamp'].iloc[-1],
+                        'exit price': currentprice,
+                        'exit_status': exit_status,
+                        'profit_or_loss': risk_management.profit_or_loss
+                    })
+                    exit_found = True
+                else:
+                    logger.debug(f"Exit condition doesn't meet at [({priceorder},{currentprice}), {df_new['timestamp'].iloc[-1]}]")
+                    i += 1
 
         else:
-            logger.info(f"No signal generated at {df['timestamp'].iloc[i]}")
+            # Move to the next 3m candle
+            time_considered = df_recent['timestamp'].iloc[-1] + pd.Timedelta(minutes=3)
+            logger.info(f"No signal generated at {df_recent['timestamp'].iloc[-1]}")
 
     return signals
 
-
-signals = backtest_futures_strategy_scalping(df_3min)
+signals = backtest_futures_strategy_scalping(tp=0.5, sl=0.3)
 print(signals)

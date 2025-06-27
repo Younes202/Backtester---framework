@@ -2,8 +2,7 @@ from loguru import logger
 
 
 class RiskManagementFutures:
-    def __init__(self, entry_price, current_price, risk_percent, profit_percent, 
-                 leverage, initial_margin, atr, fees=0.0002, position_type=1):
+    def __init__(self, entry_price, current_price, risk_percent, profit_percent, atr, position_type, leverage, initial_margin, fees=0.0002):
         """
         Binance USDT Perpetual Futures Risk Management System for LIMIT orders.
         Default fees set to 0.02% (0.0002) for maker (limit), adjust as needed for Binance.
@@ -352,8 +351,6 @@ class RiskManagementD:
             return True
         return False
     
-
-
 
     def should_exit(self):
         """Main function to determine if any exit condition is met."""
