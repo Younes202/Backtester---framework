@@ -1,4 +1,4 @@
-from indicators import FuturesStrategyScalping
+from indicators import FuturesStrategyScalping, Strategy
 from risk_management import RiskManagementFutures
 
 
@@ -7,8 +7,7 @@ import pandas as pd
 
 
 # Load file 3m timframe for btc/usdt contract  
-df_3min = pd.read_csv('futures-klines/btcusdt_3m_2024-06-22_2025-06-22.csv')
-df_1min = pd.read_csv('futures-klines/btcusdt_1_2024-06-22_2025-06-22.csv')
+
 
 
 # this function fetches the most recent data from a CSV file based on a target timestamp
@@ -53,7 +52,7 @@ def fetch_recent_data_from_csv(
     return df_result
 
 
-def backtest_futures_strategy_scalping(tp=0.5, sl=0.3):
+def backtest_futures_strategy_scalping(tp=0.5, sl=0.3, leverage=0, intial_margin=1000):
     """
     Backtest the FuturesStrategyScalping strategy on the provided DataFrame.
 
@@ -64,8 +63,8 @@ def backtest_futures_strategy_scalping(tp=0.5, sl=0.3):
         List[dict]: List of signal dictionaries with timestamp, signal, and close price.
     """
     signals = []
-    time_considered = '2024-06-22 23:42:00'
-    df_path = 'futures-klines/btcusdt_3m_2024-06-22_2025-06-22.csv'
+    time_considered = '2024-07-01 00:00:00'
+    df_path = 'futures-klines/btcusdt_3_2024-06-22_2025-06-22.csv'
     df_path_1m = 'futures-klines/btcusdt_1_2024-06-22_2025-06-22.csv'
 
     while True:
@@ -73,7 +72,7 @@ def backtest_futures_strategy_scalping(tp=0.5, sl=0.3):
         df_recent = fetch_recent_data_from_csv(
             csv_path=df_path,
             target_timestamp=time_considered,
-            n_points=40,
+            n_points=20,
             augmentation_next=0
         )
 
@@ -128,7 +127,7 @@ def backtest_futures_strategy_scalping(tp=0.5, sl=0.3):
 
                 risk_management = RiskManagementFutures(
                     priceorder, currentprice, stoploss, target_profit, atr, position_type,
-                    leverage=1, initial_margin=1000, fees=0.0002
+                    leverage=leverage, initial_margin=intial_margin, fees=0.0002
                 )
                 exit_status = risk_management.should_exit()
                 if exit_status:
@@ -147,19 +146,20 @@ def backtest_futures_strategy_scalping(tp=0.5, sl=0.3):
                         'timestamp exit': df_new['timestamp'].iloc[-1],
                         'exit price': currentprice,
                         'exit_status': exit_status,
-                        'profit_or_loss': risk_management.profit_or_loss
+                        'profit_or_loss': pnl
                     })
                     exit_found = True
                 else:
                     logger.debug(f"Exit condition doesn't meet at [({priceorder},{currentprice}), {df_new['timestamp'].iloc[-1]}]")
                     i += 1
+                    print("Availibale signals are : ", signals)
 
         else:
             # Move to the next 3m candle
-            time_considered = df_recent['timestamp'].iloc[-1] + pd.Timedelta(minutes=3)
+            time_considered = df_recent['timestamp'].iloc[-1] + pd.Timedelta(minutes=15)
             logger.info(f"No signal generated at {df_recent['timestamp'].iloc[-1]}")
 
     return signals
 
-signals = backtest_futures_strategy_scalping(tp=0.5, sl=0.3)
+signals = backtest_futures_strategy_scalping(tp=0.1, sl=0.1, leverage=1, intial_margin=1000)
 print(signals)

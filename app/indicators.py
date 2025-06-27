@@ -12,7 +12,7 @@ class Strategy:
         def __init__(self, data, timeframe_type):
             self.data = data.copy()
             self.timeframe_type = timeframe_type
-            self.data['timestamp'] = pd.to_datetime(self.data['open_time'])
+            self.data['timestamp'] = pd.to_datetime(self.data['timestamp'])
 
         def calculate_indicators(self):
             self.data['EMA50'] = EMAIndicator(close=self.data['close'], window=50).ema_indicator()
@@ -100,69 +100,83 @@ class FuturesStrategyScalping:
         # Ensure timestamp exists
         if 'timestamp' not in self.data.columns:
             self.data['timestamp'] = pd.to_datetime(self.data['close_time'])
-        
-        # Convert all numeric columns (critical!)
+        # Convert all numeric columns
         self.data[['open','high','low','close','volume']] = \
             self.data[['open','high','low','close','volume']].apply(pd.to_numeric, errors='coerce')
 
     def calculate_indicators(self):
-        # Ultra-responsive indicators
-        self.data['EMA5'] = self.data['close'].ewm(span=5, adjust=False).mean()  # Faster than EMA9
-        self.data['RSI_3'] = RSIIndicator(close=self.data['close'], window=3).rsi()  # Hyper-sensitive
-        # ATR - Average True Range
-        atr = AverageTrueRange(high=self.data['high'], low=self.data['low'], close=self.data['close'], window=14)
+        # Ultra-fast EMAs for 3m
+        self.data['EMA3'] = self.data['close'].ewm(span=3, adjust=False).mean()
+        self.data['EMA8'] = self.data['close'].ewm(span=8, adjust=False).mean()
+        # RSI - very sensitive
+        self.data['RSI_2'] = RSIIndicator(close=self.data['close'], window=2).rsi()
+        self.data['RSI_6'] = RSIIndicator(close=self.data['close'], window=6).rsi()
+        # ATR for volatility filter
+        atr = AverageTrueRange(high=self.data['high'], low=self.data['low'], close=self.data['close'], window=7)
         self.data['ATR'] = atr.average_true_range()
-        # Smart volume filter (adapts to market)
+        # Smart volume filter (percentile)
         if 'volume' in self.data.columns:
-            # Use rolling percentile instead of mean
-            self.data['Vol_P25'] = self.data['volume'].rolling(10).quantile(0.25)
-            self.data['Volume_Active'] = self.data['volume'] > self.data['Vol_P25'] * 1.1
+            self.data['Vol_P30'] = self.data['volume'].rolling(12).quantile(0.3)
+            self.data['Volume_Active'] = self.data['volume'] > self.data['Vol_P30'] * 1.05
         else:
             self.data['Volume_Active'] = True
-            
+        # Price momentum
+        self.data['Momentum'] = self.data['close'] - self.data['close'].shift(3)
+        # Small range filter (avoid chop)
+        self.data['Small_Range'] = self.data['ATR'] < self.data['ATR'].rolling(20).mean() * 0.9
         return self.data
 
     def generate_signals(self):
         self.calculate_indicators()
-        
-        # Simplified conditions (tested on BTC 3m)
-        self.data['Signal'] = 0  # Default to no signal
-        
-        # LONG: Price above EMA & RSI not overbought
+        self.data['Signal'] = 0
+
+        # LONG: Price above both EMAs, RSI_2 rising but not overbought, momentum positive, volume active, low chop
         self.data.loc[
-            (self.data['close'] > self.data['EMA5']) & 
-            (self.data['RSI_3'] < 60),  # Relaxed from 40
+            (self.data['close'] > self.data['EMA3']) &
+            (self.data['EMA3'] > self.data['EMA8']) &
+            (self.data['RSI_2'] > 35) & (self.data['RSI_2'] < 75) &
+            (self.data['RSI_2'] > self.data['RSI_2'].shift(1)) &
+            (self.data['Momentum'] > 0) &
+            (self.data['Volume_Active']) &
+            (self.data['Small_Range']),
             'Signal'
         ] = 1
-        
-        # SHORT: Price below EMA & RSI not oversold
+
+        # SHORT: Price below both EMAs, RSI_2 falling but not oversold, momentum negative, volume active, low chop
         self.data.loc[
-            (self.data['close'] < self.data['EMA5']) & 
-            (self.data['RSI_3'] > 40),  # Relaxed from 60
+            (self.data['close'] < self.data['EMA3']) &
+            (self.data['EMA3'] < self.data['EMA8']) &
+            (self.data['RSI_2'] < 65) & (self.data['RSI_2'] > 25) &
+            (self.data['RSI_2'] < self.data['RSI_2'].shift(1)) &
+            (self.data['Momentum'] < 0) &
+            (self.data['Volume_Active']) &
+            (self.data['Small_Range']),
             'Signal'
         ] = -1
-        
-        # Remove volume filter if still no signals
+
+        # If still no signals, relax volume and range filters
         if self.data['Signal'].abs().sum() == 0:
-            print("⚠️ No signals - removing volume filter")
             self.data['Signal'] = 0
             self.data.loc[
-                (self.data['close'] > self.data['EMA5']) & 
-                (self.data['RSI_3'] < 60), 
+                (self.data['close'] > self.data['EMA3']) &
+                (self.data['EMA3'] > self.data['EMA8']) &
+                (self.data['RSI_2'] > 35) & (self.data['RSI_2'] < 75) &
+                (self.data['Momentum'] > 0),
                 'Signal'
             ] = 1
             self.data.loc[
-                (self.data['close'] < self.data['EMA5']) & 
-                (self.data['RSI_3'] > 40), 
+                (self.data['close'] < self.data['EMA3']) &
+                (self.data['EMA3'] < self.data['EMA8']) &
+                (self.data['RSI_2'] < 65) & (self.data['RSI_2'] > 25) &
+                (self.data['Momentum'] < 0),
                 'Signal'
             ] = -1
-        
+
         # Final check
         if self.data['Signal'].abs().sum() == 0:
-            print("❌ CRITICAL: Still no signals - data/indicator issue")
-            print("Sample indicators:")
-            print(self.data[['timestamp','close','EMA5','RSI_3']].tail(10))
-        
+            print("❌ CRITICAL: Still no signals - check data/indicators")
+            print(self.data[['timestamp','close','EMA3','EMA8','RSI_2','Momentum']].tail(10))
+
         return self.data
 
 

@@ -1,140 +1,119 @@
 from loguru import logger
 
+from loguru import logger
 
 class RiskManagementFutures:
     def __init__(self, entry_price, current_price, risk_percent, profit_percent, atr, position_type, leverage, initial_margin, fees=0.0002):
         """
-        Binance USDT Perpetual Futures Risk Management System for LIMIT orders.
-        Default fees set to 0.02% (0.0002) for maker (limit), adjust as needed for Binance.
-        position_type: 1 for buy/long, -1 for sell/short
+        Enhanced Binance USDT Perpetual Futures Risk Management with precise fee handling
+        position_type: 1 (long) or -1 (short)
+        fees: 0.0002 for Binance maker (0.02%)
         """
-        self.entry_price = entry_price
+        self.raw_entry = entry_price  # Price without fees
         self.current_price = current_price
         self.risk_percent = risk_percent / 100
-        self.profit_percent = profit_percent / 100  # Flexible profit percentage
+        self.profit_percent = profit_percent / 100
         self.leverage = leverage
         self.initial_margin = initial_margin
-        self.atr = atr  # ATR value for dynamic exit strategy
-        # Binance maker (limit) fee is typically 0.02% (0.0002), but can be lower for VIP
+        self.atr = atr
         self.fees = fees
-        self.position_type = 1 if position_type == 1 else -1  # 1 for buy/long, -1 for sell/short
-        self.maintenance_margin = 0.005  # Binance default maintenance margin for USDT Perp
+        self.position_type = 1 if position_type == 1 else -1
+        self.maintenance_margin = 0.005  # Binance USDT-M default
         
-        # Validate inputs
+        # Effective entry price after fees
+        self.effective_entry = (self.raw_entry * (1 + self.fees) if self.position_type == 1 else self.raw_entry * (1 - self.fees))
+        
         self._validate_parameters()
-        
-        # Calculate derived values
-        self.position_size = (initial_margin * leverage) / entry_price
+        self.position_size = (initial_margin * leverage) / self.raw_entry
         self.trade_risk = initial_margin * self.risk_percent
         self._calculate_liquidation_price()
         
-        # Set initial take-profit price
-        self.initial_tp_price = self.calculate_take_profit_price()
-
-        logger.info(f"Position initialized: {'LONG' if self.position_type == 1 else 'SHORT'} {self.position_size:.2f} contracts (LIMIT order)")
-        logger.info(f"Risk: ${self.trade_risk:.2f} ({risk_percent}% of margin)")
-        logger.info(f"Liquidation price: {self.liquidation_price:.2f}")
+        logger.info(f"Position initialized: {'LONG' if self.position_type == 1 else 'SHORT'} {self.position_size:.4f} contracts")
+        logger.info(f"Effective entry: ${self.effective_entry:.2f} (incl. fees)")
+        logger.info(f"Risk: ${self.trade_risk:.2f} | Liq: ${self.liquidation_price:.2f}")
 
     def _validate_parameters(self):
-        """Ensure all parameters are within valid ranges"""
+        """Validate all inputs"""
         if self.position_type not in [1, -1]:
-            raise ValueError("Position type must be 1 (buy/long) or -1 (sell/short)")
-        if self.leverage <= 0:
-            raise ValueError("Leverage must be greater than 0")
-        if self.risk_percent >= 1:
-            raise ValueError("Risk percentage cannot be 100% or more")
-        if self.profit_percent <= 0:
-            raise ValueError("Profit percentage must be positive")
-        if self.atr <= 0:
-            raise ValueError("ATR must be a positive value")
+            raise ValueError("Position type must be 1 (long) or -1 (short)")
+        if self.leverage <= 0 or self.initial_margin <= 0:
+            raise ValueError("Leverage and margin must be positive")
+        if not 0 <= self.fees < 0.1:  # Reasonable fee check
+            raise ValueError("Fees must be between 0% and 10%")
 
     def _calculate_liquidation_price(self):
-        """Calculate approximate liquidation price for Binance USDT Perp"""
-        # Binance's formula is more complex, but this is a simplified approximation
+        """Precise liquidation price with fee-adjusted entry"""
         if self.position_type == 1:
-            self.liquidation_price = self.entry_price * (1 - (1/self.leverage) + self.maintenance_margin)
+            self.liquidation_price = self.effective_entry * (1 - (1/self.leverage) + self.maintenance_margin)
         else:
-            self.liquidation_price = self.entry_price * (1 + (1/self.leverage) - self.maintenance_margin)
-
-    def calculate_stop_loss_price(self):
-        """Calculate stop-loss price based on risk percentage (for LIMIT order exit)"""
-        price_risk = self.trade_risk / self.position_size
-        if self.position_type == 1:
-            return self.entry_price - price_risk
-        else:
-            return self.entry_price + price_risk
-
-    def calculate_take_profit_price(self):
-        """Calculate take-profit price ensuring net profit after fees (for LIMIT order exit)"""
-        target_profit = self.initial_margin * self.profit_percent  # Target net profit
-        required_price_change = target_profit / self.position_size  # Adjusted for position size
-        
-        # Adjust for Binance maker (limit) fees (entry + exit)
-        fee_adjustment = self.fees * self.entry_price * 2  # Fees for entry and exit
-
-        if self.position_type == 1:
-            return self.entry_price + required_price_change + fee_adjustment
-        else:
-            return self.entry_price - required_price_change - fee_adjustment
+            self.liquidation_price = self.effective_entry * (1 + (1/self.leverage) - self.maintenance_margin)
 
     def calculate_pnl(self, exit_price):
-        """Calculate profit/loss with Binance limit order fees"""
+        """Exact PnL calculation with fees on both sides"""
+        exit_price_net = exit_price * (1 - self.fees) if self.position_type == 1 else exit_price * (1 + self.fees)
+        
         if self.position_type == 1:
-            price_change = exit_price - self.entry_price
+            return (exit_price_net - self.effective_entry) * self.position_size
         else:
-            price_change = self.entry_price - exit_price
-            
-        gross_pnl = price_change * self.position_size
-        # Binance charges fee on both entry and exit, both at limit fee rate
-        fee = (self.entry_price + exit_price) * self.position_size * self.fees
-        return gross_pnl - fee
+            return (self.effective_entry - exit_price_net) * self.position_size
 
-    def check_liquidation(self):
-        """Check if current price triggers liquidation"""
-        if (self.position_type == 1 and self.current_price <= self.liquidation_price) or \
-           (self.position_type == -1 and self.current_price >= self.liquidation_price):
-            logger.critical(f"Liquidation at {self.current_price:.2f}!")
-            return True
-        return False
-    
-    def get_exit_pnl(self):
-        """Calculate PnL at current price"""
-        pnl = self.calculate_pnl(self.current_price)
-        logger.info(f"Net Profit/Loss at exit: ${pnl:.2f}")
-        return pnl
+    def calculate_take_profit_price(self):
+        """Returns exact market price needed to hit profit target after all fees"""
+        target_profit = self.initial_margin * self.profit_percent
+        
+        if self.position_type == 1:
+            # For longs: (exit*(1-fee) - entry*(1+fee)) * size = target
+            return (target_profit/self.position_size + self.effective_entry) / (1 - self.fees)
+        else:
+            # For shorts: (entry*(1-fee) - exit*(1+fee)) * size = target
+            return (self.effective_entry - target_profit/self.position_size) / (1 + self.fees)
 
-    def stop_loss_exit(self):
-        """Check if stop-loss condition is met (LIMIT order logic)"""
-        sl_price = self.calculate_stop_loss_price()
-        if (self.position_type == 1 and self.current_price <= sl_price) or \
-           (self.position_type == -1 and self.current_price >= sl_price):
-            return True
-        return False
-
-    def target_profit_exit(self):
-        """Check if take-profit condition is met (LIMIT order logic)"""
-        dynamic_tp_price = self.initial_tp_price
-        if self.position_type == 1 and self.current_price >= dynamic_tp_price:
-            return True
-        elif self.position_type == -1 and self.current_price <= dynamic_tp_price:
-            return True
-        return False
+    def calculate_stop_loss_price(self):
+        """Returns exact price where loss equals risk% after fees"""
+        max_loss = abs(self.initial_margin * self.risk_percent)
+        
+        if self.position_type == 1:
+            # (exit*(1-fee) - entry*(1+fee)) * size = -max_loss
+            return (self.effective_entry - max_loss/self.position_size) / (1 - self.fees)
+        else:
+            # (entry*(1-fee) - exit*(1+fee)) * size = -max_loss
+            return (self.effective_entry + max_loss/self.position_size) / (1 + self.fees)
 
     def should_exit(self):
-        """Check exit conditions including stop-loss and take-profit (LIMIT order logic)"""
-        if self.check_liquidation():
-            logger.critical(f"Liquidation triggered at {self.current_price:.2f}")
-            return "LIQUIDATION"  # Indicate that the exit is due to liquidation
+        """Comprehensive exit check with precise calculations"""
+        if (self.position_type == 1 and self.current_price <= self.liquidation_price) or \
+           (self.position_type == -1 and self.current_price >= self.liquidation_price):
+            pnl = self.calculate_pnl(self.current_price)
+            print(f"💥 LIQUIDATED at {self.current_price:.2f}! Loss: ${abs(pnl):.2f}")
+            return "LIQUIDATION"
 
-        if self.stop_loss_exit():
-            return "LOSS"  # Indicate that the exit is due to stop-loss
+        tp_price = self.calculate_take_profit_price()
+        sl_price = self.calculate_stop_loss_price()
 
-        if self.target_profit_exit():
-            return "PROFIT"  # Indicate that the exit is due to take-profit
+        if self.position_type == 1:
+            if self.current_price >= tp_price:
+                pnl = self.calculate_pnl(self.current_price)
+                print(f"🟢 TP HIT: {self.current_price:.2f} | Profit: ${pnl:.2f}")
+                return "PROFIT"
+            elif self.current_price <= sl_price:
+                pnl = self.calculate_pnl(self.current_price)
+                print(f"🔴 SL HIT: {self.current_price:.2f} | Loss: ${abs(pnl):.2f}")
+                return "LOSS"
+        else:  # Short position
+            if self.current_price <= tp_price:
+                pnl = self.calculate_pnl(self.current_price)
+                print(f"🟢 TP HIT: {self.current_price:.2f} | Profit: ${pnl:.2f}")
+                return "PROFIT"
+            elif self.current_price >= sl_price:
+                pnl = self.calculate_pnl(self.current_price)
+                print(f"🔴 SL HIT: {self.current_price:.2f} | Loss: ${abs(pnl):.2f}")
+                return "LOSS"
 
-        return False  # No exit condition met
-
-
+        # Show running PnL
+        current_pnl = self.calculate_pnl(self.current_price)
+        status = "PROFIT" if current_pnl >= 0 else "LOSS"
+        print(f"⏳ Current: ${current_pnl:.2f} ({status}) | TP: {tp_price:.2f} | SL: {sl_price:.2f}")
+        return False
 
 class RiskManagement:
     def __init__(self, priceorder, currentprice, target_profit, stoploss, dollar_investment, atr, fees=0.1):
