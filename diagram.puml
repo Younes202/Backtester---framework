@@ -1,0 +1,104 @@
+
+@startuml
+
+' Entities
+class User {
+  +id : int
+  +name : string
+  +email : string
+  +password : string
+  +role : string
+  +cin : string
+  +contract_agreement : string
+}
+
+class Rental {
+  +id : int
+  +user_id : int
+  +bike_id : int
+  +payment_id : int
+  +start_time : datetime
+  +end_time : datetime
+  +duration : int
+  +distance : float
+  +start_station_id : int
+  +end_station_id : int
+}
+
+class Bike {
+  +id : int
+  +qr_code : string
+  +station_id : int
+  +battery_level : int
+  +status : string
+  +zone_id : int
+}
+
+class Station {
+  +id : int
+  +name : string
+  +location : string
+  +capacity : int
+  +current_bike_count : int
+}
+
+class Zone {
+  +id : int
+  +name : string
+  +polygon_data : string
+  +description : string
+}
+
+class Payment {
+  +id : int
+  +rental_id : int
+  +amount : float
+  +method : string
+  +status : string
+  +timestamp : datetime
+}
+
+class BatteryLog {
+  +id : int
+  +bike_id : int
+  +level : int
+  +voltage : float
+  +temperature : float
+  +timestamp : datetime
+}
+
+class Alert {
+  +id : int
+  +bike_id : int [0..1]
+  +station_id : int [0..1]
+  +current_position : string [0..1]
+  +start_station_id : int [0..1]
+  +last_station_id : int [0..1]
+  +type : string
+  +severity : string
+  +message : string
+  +created_at : datetime
+  +resolved : boolean
+}
+
+' Relationships
+User "1" -- "0..*" Rental : has >
+Rental "1" -- "1" User : belongs to >
+Rental "1" -- "1" Bike : uses >
+Rental "1" -- "1" Payment : paid by >
+Rental "1" -- "1" Station : start_station >
+Rental "1" -- "1" Station : end_station >
+
+Bike "1" -- "0..*" BatteryLog : has >
+Bike "1" -- "0..*" Alert : triggers >
+Bike "1" -- "1" Station : located at >
+Bike "1" -- "1" Zone : belongs to >
+
+Station "1" -- "0..*" Bike : contains >
+Station "1" -- "0..*" Alert : area alerts >
+Station "1" -- "1" Zone : belongs to >
+
+Zone "1" -- "0..*" Station : includes >
+
+@enduml
+

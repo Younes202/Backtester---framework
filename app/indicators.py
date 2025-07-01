@@ -7,91 +7,129 @@ import talib
 import numpy as np
 from ta.volatility import AverageTrueRange
 
-
 class Strategy:
-        def __init__(self, data, timeframe_type):
-            self.data = data.copy()
-            self.timeframe_type = timeframe_type
-            self.data['timestamp'] = pd.to_datetime(self.data['timestamp'])
+    def __init__(self, data, timeframe_type):
+        self.data = data.copy()
+        self.timeframe_type = timeframe_type
+        self.data['timestamp'] = pd.to_datetime(self.data['timestamp'])
 
-        def calculate_indicators(self):
-            self.data['EMA50'] = EMAIndicator(close=self.data['close'], window=50).ema_indicator()
-            self.data['EMA200'] = EMAIndicator(close=self.data['close'], window=200).ema_indicator()
-            self.data['RSI'] = RSIIndicator(close=self.data['close'], window=14).rsi()
-            
+    def calculate_indicators(self):
+        self.data['EMA50'] = EMAIndicator(close=self.data['close'], window=50).ema_indicator() if len(self.data) >= 50 else np.nan
+        self.data['EMA200'] = EMAIndicator(close=self.data['close'], window=200).ema_indicator() if len(self.data) >= 200 else np.nan
+        self.data['RSI'] = RSIIndicator(close=self.data['close'], window=14).rsi() if len(self.data) >= 14 else np.nan
+        
+        if len(self.data) >= 12:  # MACD needs at least window_slow periods
             macd = MACD(close=self.data['close'], window_slow=12, window_fast=6, window_sign=5)
             self.data['MACD'] = macd.macd()
             self.data['MACD_Signal'] = macd.macd_signal()
-            
+        else:
+            self.data['MACD'] = np.nan
+            self.data['MACD_Signal'] = np.nan
+        
+        if len(self.data) >= 14:
             self.data['ADX'] = ADXIndicator(high=self.data['high'], low=self.data['low'], close=self.data['close'], window=14).adx()
-            
+        else:
+            self.data['ADX'] = np.nan
+        
+        if len(self.data) >= 20:
             bb = BollingerBands(close=self.data['close'], window=20, window_dev=2)
             self.data['BB_Width'] = bb.bollinger_hband() - bb.bollinger_lband()
+        else:
+            self.data['BB_Width'] = np.nan
 
-            if all(col in self.data.columns for col in ['high', 'low', 'close', 'volume']):
-                self.data['VWAP'] = VolumeWeightedAveragePrice(
-                    high=self.data['high'], low=self.data['low'],
-                    close=self.data['close'], volume=self.data['volume'], window=20
-                ).volume_weighted_average_price()
+        if all(col in self.data.columns for col in ['high', 'low', 'close', 'volume']):
+            self.data['VWAP'] = VolumeWeightedAveragePrice(
+                high=self.data['high'], low=self.data['low'],
+                close=self.data['close'], volume=self.data['volume'], window=20
+            ).volume_weighted_average_price()
 
-            self.data['Volume_OK'] = self.data['volume'] > self.data['volume'].rolling(20).mean()
-            self.data['Volatility_OK'] = self.data['BB_Width'] > self.data['BB_Width'].rolling(20).mean()
-            self.data['Trend_Strength'] = self.data['ADX'] > 20
-            self.data['Bullish_Engulfing'] = talib.CDLENGULFING(
-                self.data['open'], self.data['high'], self.data['low'], self.data['close']
-            ) > 0
+        self.data['Volume_OK'] = self.data['volume'] > self.data['volume'].rolling(20).mean()
+        self.data['Volatility_OK'] = self.data['BB_Width'] > self.data['BB_Width'].rolling(20).mean()
+        self.data['Trend_Strength'] = self.data['ADX'] > 20
+        self.data['Bullish_Engulfing'] = talib.CDLENGULFING(
+            self.data['open'], self.data['high'], self.data['low'], self.data['close']
+        ) > 0
 
-            return self.data
+        return self.data
 
-        def detect_fvg(self):
-            self.data['FVG'] = (
-                (self.data['low'].shift(1) > self.data['high'].shift(-1)) |
-                (self.data['high'].shift(1) < self.data['low'].shift(-1))
+    def detect_fvg(self):
+        self.data['FVG'] = (
+            (self.data['low'].shift(1) > self.data['high'].shift(-1)) |
+            (self.data['high'].shift(1) < self.data['low'].shift(-1))
+        )
+        return self.data
+
+    def detect_cisd(self):
+        self.data['Higher_High'] = self.data['high'] > self.data['high'].shift(1)
+        self.data['Higher_Low'] = self.data['low'] > self.data['low'].shift(1)
+        self.data['Bullish_Structure'] = self.data['Higher_High'] & self.data['Higher_Low']
+        self.data['Lower_High'] = self.data['high'] < self.data['high'].shift(1)
+        self.data['Lower_Low'] = self.data['low'] < self.data['low'].shift(1)
+        self.data['Bearish_Structure'] = self.data['Lower_High'] & self.data['Lower_Low']
+        self.data['atr'] = talib.ATR(self.data['high'], self.data['low'], self.data['close'], timeperiod=14)
+        return self.data
+
+    def generate_signals(self):
+        self.calculate_indicators()
+        self.detect_fvg()
+        self.detect_cisd()
+        self.data['Signal'] = 0
+
+        if self.timeframe_type == '1d':
+            # Bullish: 1, Bearish: -1, None: 0
+            self.data['Signal'] = np.where(
+                (self.data['EMA50'] > self.data['EMA200']) &
+                (self.data['RSI'] > 55) &
+                (self.data['close'] > self.data['VWAP']) &
+                (self.data['MACD'] > self.data['MACD_Signal']),
+                1,
+                np.where(
+                    (self.data['EMA50'] < self.data['EMA200']) &
+                    (self.data['RSI'] < 45) &
+                    (self.data['close'] < self.data['VWAP']) &
+                    (self.data['MACD'] < self.data['MACD_Signal']),
+                    -1,
+                    0
+                )
             )
-            return self.data
 
-        def detect_cisd(self):
-            self.data['Higher_High'] = self.data['high'] > self.data['high'].shift(1)
-            self.data['Higher_Low'] = self.data['low'] > self.data['low'].shift(1)
-            self.data['Bullish_Structure'] = self.data['Higher_High'] & self.data['Higher_Low']
-            self.data['Lower_High'] = self.data['high'] < self.data['high'].shift(1)
-            self.data['Lower_Low'] = self.data['low'] < self.data['low'].shift(1)
-            self.data['Bearish_Structure'] = self.data['Lower_High'] & self.data['Lower_Low']
-            self.data['atr'] = talib.ATR(self.data['high'], self.data['low'], self.data['close'], timeperiod=14)
-            return self.data
+        elif self.timeframe_type == '1h':
+            # Bullish: 1, Bearish: -1, None: 0
+            self.data['Signal'] = np.where(
+                self.data['Bullish_Structure'] &
+                (self.data['MACD'] > self.data['MACD_Signal']) &
+                (self.data['RSI'].diff() > 0),
+                1,
+                np.where(
+                    self.data['Bearish_Structure'] &
+                    (self.data['MACD'] < self.data['MACD_Signal']) &
+                    (self.data['RSI'].diff() < 0),
+                    -1,
+                    0
+                )
+            )
 
-        def generate_signals(self):
-            self.calculate_indicators()
-            self.detect_fvg()
-            self.detect_cisd()
-            self.data['Signal'] = 0
+        elif self.timeframe_type == '15m':
+            # Bullish: 1, Bearish: -1, None: 0
+            self.data['Signal'] = np.where(
+                (self.data['close'] > self.data['EMA50']) &
+                (self.data['Bullish_Structure']) &
+                (self.data['MACD'] > self.data['MACD_Signal']) &
+                (self.data['atr'] < self.data['atr'].rolling(20).mean()),
+                1,
+                np.where(
+                    (self.data['close'] < self.data['EMA50']) &
+                    (self.data['Bearish_Structure']) &
+                    (self.data['MACD'] < self.data['MACD_Signal']) &
+                    (self.data['atr'] < self.data['atr'].rolling(20).mean()),
+                    -1,
+                    0
+                )
+            )
 
-            if self.timeframe_type == '1d':
-                self.data['Bias'] = (
-                    (self.data['EMA50'] > self.data['EMA200']) &
-                    (self.data['RSI'] > 55) &
-                    (self.data['close'] > self.data['VWAP']) &
-                    (self.data['MACD'] > self.data['MACD_Signal'])
-                ).astype(int)
+        # Only drop rows where essential columns for signals are NaN (avoid dropping all rows due to rolling NaNs at the start)
 
-            elif self.timeframe_type == '1h':
-                self.data['Confirm'] = (
-                    self.data['Bullish_Structure'] &
-                    (self.data['MACD'] > self.data['MACD_Signal']) &
-                    (self.data['RSI'].diff() > 0)  # RSI trending up
-                ).astype(int)
-
-            elif self.timeframe_type == '15m':
-                self.data['Entry'] = (
-                    (self.data['close'] > self.data['EMA50']) &
-                    (self.data['Bullish_Structure']) &
-                    (self.data['MACD'] > self.data['MACD_Signal']) &
-                    (self.data['atr'] < self.data['atr'].rolling(20).mean())  # avoids volatile chop
-                ).astype(int)
-
-            self.data.dropna(inplace=True)
-            columns = ['timestamp', 'open', 'high', 'low', 'close', 'ATR', 'Entry', 'Confirm', 'Bias']
-            return  self.data[columns]
+        return self.data
         
 
 class FuturesStrategyScalping:

@@ -6,7 +6,7 @@ import os
 def fetch_bybit_klines_save_csv(
     symbol="BTCUSDT",
     category="linear",
-    interval="5m",  # 3-minute interval
+    interval="D",  
     start_time="2024-06-22",
     end_time="2025-06-22",
     limit=1000,
@@ -19,7 +19,25 @@ def fetch_bybit_klines_save_csv(
     start_ts = int(pd.Timestamp(start_time).timestamp() * 1000)
     end_ts = int(pd.Timestamp(end_time).timestamp() * 1000)
 
-    interval_ms = int(interval) * 60 * 1000  # 3 minutes in ms
+    # Map interval strings to milliseconds
+    interval_map = {
+        "1": 1 * 60 * 1000,
+        "3": 3 * 60 * 1000,
+        "5": 5 * 60 * 1000,
+        "15": 15 * 60 * 1000,
+        "30": 30 * 60 * 1000,
+        "60": 60 * 60 * 1000,
+        "120": 120 * 60 * 1000,
+        "240": 240 * 60 * 1000,
+        "360": 360 * 60 * 1000,
+        "720": 720 * 60 * 1000,
+        "D": 24 * 60 * 60 * 1000,
+        "W": 7 * 24 * 60 * 60 * 1000,
+        "M": 30 * 24 * 60 * 60 * 1000  # Approximate month
+    }
+    if interval not in interval_map:
+        raise ValueError(f"Unsupported interval: {interval}")
+    interval_ms = interval_map[interval]
     all_klines = []
 
     seen_timestamps = set()
@@ -97,7 +115,7 @@ def fetch_bybit_klines_save_csv(
 # Run it
 fetch_bybit_klines_save_csv(
     symbol="BTCUSDT",
-    interval="5",
-    start_time="2024-06-22",
+    interval="D",
+    start_time="2020-06-22",
     end_time="2025-06-22"
 )

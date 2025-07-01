@@ -1,0 +1,9 @@
+
+@startuml
+actor User
+participant Bike
+
+User -> Bike: Press Emergency
+Bike --> EMS: Send Location
+Bike -> User: "Help is Coming"
+@enduml

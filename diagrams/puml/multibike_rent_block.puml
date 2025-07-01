@@ -1,0 +1,11 @@
+
+@startuml
+actor User
+participant BikeA
+participant BikeB
+
+User -> BikeA: Scan & Rent
+BikeA --> User: "Ride #123 Started"
+User -> BikeB: Attempt Scan
+BikeB --> User: "IMPOSSIBLE: Already Riding"
+@enduml

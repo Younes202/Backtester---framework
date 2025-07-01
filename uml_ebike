@@ -1,0 +1,21 @@
+digraph "E-Bike UML" {
+	fontsize=12 rankdir=LR
+	User [label="{User|id\lname\lemail\lpassword\lrole\lcin\lcontract\l}" shape=record]
+	Rental [label="{Rental|id\luser_id\lbike_id\lstart_time\lend_time\lduration\ldistance_km\lpayment_id\lstart_station_id\lend_station_id\l}" shape=record]
+	Bike [label="{Bike|id\lqr_code\lstation_id\lbattery_lvl\lstatus\lzone_id\l}" shape=record]
+	Zone [label="{Zone|id\lname\lpolygon_data\ldescription\l}" shape=record]
+	Station [label="{Station|id\lname\llocation\lcapacity\lcurrent_bike_count\l}" shape=record]
+	Camera [label="{Camera|id\lstation_id\lip_address\lstatus\llast_maintenance\l}" shape=record]
+	Payment [label="{Payment|id\lamount\lmethod\lstatus\ltimestamp\l}" shape=record]
+	BatteryLog [label="{BatteryLog|id\lbike_id\llevel\lvoltage\ltemperature\ltimestamp\l}" shape=record]
+	Alert [label="{Alert|id\lbike_id\lstation_id\lcurrent_position\lstart_station\lend_station\ltype\lseverity\lmessage\lcreated_at\lresolved\l}" shape=record]
+	User -> Rental [label="1..*"]
+	Rental -> Bike [label=1]
+	Bike -> Zone [label=1]
+	Rental -> Station [label="start/end" style=dashed]
+	Station -> Camera [label="1..*"]
+	Rental -> Payment [label=1 style=dashed]
+	Bike -> BatteryLog [label="1..*"]
+	Alert -> Bike [label="0..1" style=dashed]
+	Alert -> Station [label="0..1" style=dashed]
+}

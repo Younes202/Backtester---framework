@@ -1,0 +1,131 @@
+
+@startuml
+
+' Enable directional layout for better organization
+left to right direction
+
+' Define packages/groups for better organization
+package "User Management" {
+  class User {
+    +id : int
+    +name : string
+    +email : string
+    +password : string
+    +role : string
+    +cin : string
+    +contract_agreement : string
+  }
+}
+
+package "Rental System" {
+  class Rental {
+    +id : int
+    +start_time : datetime
+    +end_time : datetime
+    +duration : int
+    +distance : float
+  }
+  
+  class Payment {
+    +id : int
+    +amount : float
+    +method : string
+    +status : string
+    +timestamp : datetime
+  }
+}
+
+package "Bike Management" {
+  class Bike {
+    +id : int
+    +qr_code : string
+    +battery_level : int
+    +status : string
+  }
+  
+  class BatteryLog {
+    +id : int
+    +level : int
+    +voltage : float
+    +temperature : float
+    +timestamp : datetime
+  }
+}
+
+package "Location System" {
+  class Station {
+    +id : int
+    +name : string
+    +location : string
+    +capacity : int
+    +current_bike_count : int
+  }
+  
+  class Zone {
+    +id : int
+    +name : string
+    +polygon_data : string
+    +description : string
+  }
+}
+
+package "Monitoring" {
+  class Alert {
+    +id : int
+    +type : string
+    +severity : string
+    +message : string
+    +created_at : datetime
+    +resolved : boolean
+  }
+}
+
+' Define relationships with clear multiplicities and direction
+User "1" --> "0..*" Rental : "rents"
+Rental "1" --> "1" Bike : "uses"
+Rental "1" --> "1" Payment : "generates"
+Rental "1" --> "1" Station : "starts at"
+Rental "1" --> "0..1" Station : "ends at"
+
+Bike "1" --> "0..*" BatteryLog : "has logs"
+Bike "1" --> "0..*" Alert : "triggers"
+Bike "1" --> "0..1" Station : "parked at"
+Bike "1" --> "1" Zone : "operates in"
+
+Station "1" --> "0..*" Bike : "contains"
+Station "1" --> "0..*" Alert : "receives"
+Station "1" --> "1" Zone : "located in"
+
+Zone "1" --> "0..*" Station : "includes"
+
+' Add notes for important constraints
+note top of Bike
+  status: available/maintenance/rented
+  battery_level: 0-100%
+end note
+
+note top of Alert
+  type: geofence_violation,
+  theft_attempt, vandalism,
+  low_battery, maintenance_needed
+end note
+
+note right of Rental
+  duration: minutes
+  distance: kilometers
+end note
+
+' Style improvements
+skinparam class {
+  BackgroundColor White
+  BorderColor #333
+  ArrowColor #666
+}
+
+skinparam package {
+  BackgroundColor #F0F0F0
+  BorderColor #999
+  FontStyle bold
+}
+
+@enduml

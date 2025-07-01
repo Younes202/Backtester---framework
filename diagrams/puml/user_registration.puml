@@ -1,0 +1,32 @@
+
+@startuml
+
+actor User
+participant "Mobile App" as App
+participant "Verification System" as System
+database "Database"
+
+== Registration Form ==
+User -> App: "Enter: \n• Full Name\n• Email\n• Phone"
+User -> App: "Take Live Photo"
+User -> App: "Sign Contract"
+
+== Verification ==
+App -> System: "Submit Data"
+System -> Database: "Store Temp Record"
+
+alt Automatic Checks
+    System -> System: "Validate:\n1. Email\n2. Phone\n3. Photo"
+else Manual Review
+    System -> "Admin": "Flag Review"
+    "Admin" --> System: "Decision"
+end
+
+== Result ==
+alt Approved
+    System -> Database: "Activate"
+    App -> User: "Verified!"
+else Rejected
+    App -> User: "Fix Issues:\n- Photo\n- Info"
+end
+@enduml

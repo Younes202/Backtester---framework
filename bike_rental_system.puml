@@ -1,0 +1,156 @@
+
+@startuml
+
+' ==== Configuration ====
+left to right direction
+skinparam class {
+  BackgroundColor White
+  BorderColor #333
+  ArrowColor #666
+  FontSize 13
+}
+skinparam package {
+  BackgroundColor #F0F8FF
+  BorderColor #4682B4
+  FontSize 15
+  FontStyle bold
+}
+skinparam note {
+  BackgroundColor #FFFACD
+  BorderColor #DAA520
+}
+
+' ==== Core Entities ====
+package "User Domain" #F5FFFA {
+  class User <<(E,#ADD8E6)>> {
+    +id : int
+    +name : string
+    +email : string
+    +password : string
+    +role : string <<enumeration>>
+    +cin : string
+    +contract_agreement : string
+  }
+}
+
+package "Rental Process" #FFF5EE {
+  class Rental <<(P,#FFD700)>> {
+    +id : int
+    +start_time : datetime
+    +end_time : datetime
+    +duration : int <<minutes>>
+    +distance : float <<km>>
+  }
+  
+  class Payment <<(P,#98FB98)>> {
+    +id : int
+    +amount : float
+    +method : string <<enumeration>>
+    +status : string <<enumeration>>
+    +timestamp : datetime
+  }
+}
+
+package "Bike System" #F0FFF0 {
+  class Bike <<(E,#90EE90)>> {
+    +id : int
+    +qr_code : string
+    +battery_level : int <<0-100%>>
+    +status : string <<enumeration>>
+  }
+  
+  class BatteryLog <<(V,#FFA07A)>> {
+    +id : int
+    +level : int
+    +voltage : float
+    +temperature : float
+    +timestamp : datetime
+  }
+}
+
+package "Location Network" #F0F8FF {
+  class Station <<(E,#87CEFA)>> {
+    +id : int
+    +name : string
+    +location : string
+    +capacity : int
+    +current_bike_count : int
+  }
+  
+  class Zone <<(E,#E6E6FA)>> {
+    +id : int
+    +name : string
+    +polygon_data : string
+    +description : string
+  }
+}
+
+package "Monitoring" #FFFAF0 {
+  class Alert <<(V,#FFB6C1)>> {
+    +id : int
+    +type : string <<enumeration>>
+    +severity : string <<enumeration>>
+    +message : string
+    +created_at : datetime
+    +resolved : boolean
+  }
+}
+
+' ==== Relationships ====
+User "1" --> "0..*" Rental : "rents"
+Rental "1" --> "1" Bike : "uses"
+Rental "1" --> "1" Payment : "generates >"
+Rental "1" --> "1" Station : "starts at >"
+Rental "0..1" --> "1" Station : "returns to >"
+
+Bike "1" --> "0..*" BatteryLog : "generates log"
+Bike "1" --> "0..*" Alert : "triggers >"
+Bike "0..1" --> "1" Station : "parked at >"
+Bike "1" --> "1" Zone : "operates in >"
+
+Station "1" --> "0..*" Bike : "hosts"
+Station "1" --> "0..*" Alert : "receives >"
+Station "1" --> "1" Zone : "located in >"
+
+' ==== Enumeration Notes ====
+note top of User
+  <b>Role Enum:</b>
+  • customer
+  • operator
+  • admin
+end note
+
+note top of Bike
+  <b>Status Enum:</b>
+  • available
+  • rented
+  • maintenance
+  • low_battery
+end note
+
+note right of Payment
+  <b>Method Enum:</b>
+  • credit_card
+  • mobile_payment
+  • subscription
+end note
+
+note bottom of Alert
+  <b>Type Enum:</b>
+  • geofence_violation
+  • theft_attempt
+  • vandalism
+  • low_battery
+  • maintenance_needed
+end note
+
+' ==== Legend ====
+legend right
+  <b>Entity Types:</b>
+  <color:#ADD8E6>█</color> Core Entity (E)
+  <color:#FFD700>█</color> Process Entity (P)
+  <color:#FFA07A>█</color> Value Object (V)
+  <color:#90EE90>█</color> Business Object (B)
+end legend
+
+@enduml

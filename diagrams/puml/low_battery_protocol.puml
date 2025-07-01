@@ -1,0 +1,11 @@
+
+@startuml
+participant "Battery Sensor" as Sensor
+participant App
+actor User
+
+Sensor -> Bike: Battery < 20%
+Bike -> App: Update Status
+App -> User: "Low Battery - Return Soon"
+Bike -> Maintenance: Create Ticket
+@enduml

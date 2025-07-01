@@ -1,0 +1,11 @@
+
+@startuml
+actor Thief
+participant Bike
+participant Alarm
+
+Thief -> Bike: Forceful Movement
+Bike -> Alarm: Trigger
+Alarm -> Police: Send Location
+Alarm -> User: Notification
+@enduml

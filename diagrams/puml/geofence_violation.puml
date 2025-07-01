@@ -1,0 +1,11 @@
+
+@startuml
+actor User
+participant Bike
+participant AlertSystem
+
+Bike -> User: "Approaching Zone Boundary"
+Bike -> AlertSystem: Send Warning
+AlertSystem -> Bike: Reduce Speed
+Bike -> User: "Return to Service Area"
+@enduml

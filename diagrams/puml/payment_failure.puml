@@ -1,0 +1,11 @@
+
+@startuml
+actor User
+participant App
+participant Payment
+
+User -> App: End Ride
+App -> Payment: Charge 4DH
+Payment --> App: Declined
+App -> User: "Payment Failed - Update Method"
+@enduml

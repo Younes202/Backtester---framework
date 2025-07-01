@@ -1,0 +1,25 @@
+@startuml
+actor User
+participant App
+participant Bike
+participant Payment
+
+User -> App: Scan QR Code
+App -> Bike: Check Availability
+Bike --> App: "Status: Available"
+
+alt No Active Rental
+    App -> Bike: Unlock
+    Bike --> User: "Unlocked! Ride #123"
+    User -> Bike: Return
+    Bike -> Payment: Process Charge
+    Payment --> User: "Paid $3.50"
+else Has Active Rental
+    App -> Payment: "Check Pending Payment"
+    Payment --> App: "Unpaid Ride Exists"
+    App --> User: "Pay 4 DH to start new ride"
+    User -> Payment: Settle Balance
+    Payment --> App: "Cleared"
+    App -> Bike: Unlock
+end
+@enduml
