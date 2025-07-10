@@ -120,11 +120,97 @@ class SwingStrategy:
         self.timeframe_type = timeframe_type
         self.data['timestamp'] = pd.to_datetime(self.data['timestamp'])
         
-        # New price action columns
+        # Initialize all indicator columns
+        self.data['EMA50'] = np.nan
+        self.data['EMA200'] = np.nan
+        self.data['RSI'] = np.nan
+        self.data['MACD'] = np.nan
+        self.data['MACD_Signal'] = np.nan
+        self.data['ADX'] = np.nan
+        self.data['BB_Width'] = np.nan
+        self.data['VWAP'] = np.nan
+        self.data['Volume_OK'] = False
+        self.data['Volatility_OK'] = False
+        self.data['Trend_Strength'] = False
+        self.data['Bullish_Engulfing'] = False
+        self.data['FVG'] = False
+        self.data['Higher_High'] = False
+        self.data['Higher_Low'] = False
+        self.data['Bullish_Structure'] = False
+        self.data['Lower_High'] = False
+        self.data['Lower_Low'] = False
+        self.data['Bearish_Structure'] = False
+        self.data['atr'] = np.nan
+        
+        # Price action columns
         self.data['swing_high'] = np.nan
         self.data['swing_low'] = np.nan
         self.data['pullback_zone'] = False
         self.data['breakout_confirmed'] = False
+
+    def calculate_indicators(self):
+        """Calculate all technical indicators using talib"""
+        # EMAs
+        if len(self.data) >= 50:
+            self.data['EMA50'] = talib.EMA(self.data['close'], timeperiod=50)
+        if len(self.data) >= 200:
+            self.data['EMA200'] = talib.EMA(self.data['close'], timeperiod=200)
+        
+        # RSI
+        if len(self.data) >= 14:
+            self.data['RSI'] = talib.RSI(self.data['close'], timeperiod=14)
+        
+        # MACD
+        if len(self.data) >= 26:  # Slow EMA period
+            macd, macdsignal, macdhist = talib.MACD(self.data['close'], fastperiod=12, slowperiod=26, signalperiod=9)
+            self.data['MACD'] = macd
+            self.data['MACD_Signal'] = macdsignal
+        
+        # ADX
+        if len(self.data) >= 14:
+            self.data['ADX'] = talib.ADX(self.data['high'], self.data['low'], self.data['close'], timeperiod=14)
+        
+        # Bollinger Bands
+        if len(self.data) >= 20:
+            upper, middle, lower = talib.BBANDS(self.data['close'], timeperiod=20, nbdevup=2, nbdevdn=2)
+            self.data['BB_Width'] = upper - lower
+        
+        # VWAP (manual calculation)
+        if all(col in self.data.columns for col in ['high', 'low', 'close', 'volume']):
+            typical_price = (self.data['high'] + self.data['low'] + self.data['close']) / 3
+            vwap = (typical_price * self.data['volume']).rolling(window=20, min_periods=1).sum() / self.data['volume'].rolling(window=20, min_periods=1).sum()
+            self.data['VWAP'] = vwap
+        
+        # Volume and volatility conditions
+        if len(self.data) >= 20:
+            self.data['Volume_OK'] = self.data['volume'] > self.data['volume'].rolling(20).mean()
+            self.data['Volatility_OK'] = self.data['BB_Width'] > self.data['BB_Width'].rolling(20).mean()
+        
+        # Trend strength
+        self.data['Trend_Strength'] = self.data['ADX'] > 20
+        
+        # Candlestick patterns
+        self.data['Bullish_Engulfing'] = talib.CDLENGULFING(self.data['open'], self.data['high'], self.data['low'], self.data['close']) > 0
+        
+        # FVG detection
+        self.data['FVG'] = (
+            (self.data['low'].shift(1) > self.data['high'].shift(-1)) |
+            (self.data['high'].shift(1) < self.data['low'].shift(-1))
+        )
+
+        # Market structure
+        self.data['Higher_High'] = self.data['high'] > self.data['high'].shift(1)
+        self.data['Higher_Low'] = self.data['low'] > self.data['low'].shift(1)
+        self.data['Bullish_Structure'] = self.data['Higher_High'] & self.data['Higher_Low']
+        self.data['Lower_High'] = self.data['high'] < self.data['high'].shift(1)
+        self.data['Lower_Low'] = self.data['low'] < self.data['low'].shift(1)
+        self.data['Bearish_Structure'] = self.data['Lower_High'] & self.data['Lower_Low']
+        
+        # ATR
+        if len(self.data) >= 14:
+            self.data['atr'] = talib.ATR(self.data['high'], self.data['low'], self.data['close'], timeperiod=14)
+        
+        return self.data
 
     def calculate_swings(self, window=3):
         """Identify swing highs/lows for pullback detection"""
@@ -141,13 +227,13 @@ class SwingStrategy:
         self.data['pullback_zone'] = (
             # Uptrend pullback condition
             ((self.data['close'] > self.data['EMA200']) & 
-             (self.data['low'] <= self.data['EMA50']) & 
-             (self.data['low'].shift(1) > self.data['EMA50'])) |
+                (self.data['low'] <= self.data['EMA50']) & 
+                (self.data['low'].shift(1) > self.data['EMA50'])) |
             
             # Downtrend retest condition
             ((self.data['close'] < self.data['EMA200']) & 
-             (self.data['high'] >= self.data['EMA50']) & 
-             (self.data['high'].shift(1) < self.data['EMA50']))
+                (self.data['high'] >= self.data['EMA50']) & 
+                (self.data['high'].shift(1) < self.data['EMA50']))
         )
         return self.data
 
@@ -156,16 +242,16 @@ class SwingStrategy:
         self.data['breakout_confirmed'] = (
             # Bullish breakout
             ((self.data['close'] > self.data['swing_high'].shift(1)) &
-             (self.data['volume'] > self.data['volume'].rolling(5).mean())) |
+                (self.data['volume'] > self.data['volume'].rolling(5).mean())) |
             
             # Bearish breakout
             ((self.data['close'] < self.data['swing_low'].shift(1)) &
-             (self.data['volume'] > self.data['volume'].rolling(5).mean()))
+                (self.data['volume'] > self.data['volume'].rolling(5).mean()))
         )
         return self.data
 
     def generate_signals(self):
-        self.calculate_indicators()  # Your existing indicator code
+        self.calculate_indicators()
         self.calculate_swings()
         self.detect_pullback_zones()
         self.confirm_breakouts()
@@ -208,6 +294,7 @@ class SwingStrategy:
                 )
             )
         return self.data
+
 
 
 

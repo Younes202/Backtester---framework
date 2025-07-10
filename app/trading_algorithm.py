@@ -1,4 +1,4 @@
-from indicators import Strategy
+from indicators import Strategy, SwingStrategy
 from risk_management import RiskManagementFutures
 
 
@@ -51,7 +51,7 @@ def fetch_recent_data_from_csv(
     df_result = pd.concat([df_before, df_after]).reset_index(drop=True)
     return df_result
 
-def backtest_futures_strategy(tp=0.5, sl=0.3, leverage=0, intial_margin=1000):
+def backtest_futures_strategy_scalping(tp=0.5, sl=0.3, leverage=0, intial_margin=1000):
     """
     Backtest the Strategy strategy on the provided DataFrame.
 
@@ -69,6 +69,7 @@ def backtest_futures_strategy(tp=0.5, sl=0.3, leverage=0, intial_margin=1000):
     time_considered_1h = None 
     df_path_1m = 'futures-klines/btcusdt_1_2024-06-22_2025-06-22.csv'
     df_path_1h = 'futures-klines/btcusdt_60_2024-06-22_2025-06-22.csv'
+    df_path_1D = 'futures-klines/btcusdt_D_2020-06-22_2025-06-22.csv'
     df_path_15m = 'futures-klines/btcusdt_15_2024-06-22_2025-06-22.csv'
 
     while True:
@@ -152,7 +153,7 @@ def backtest_futures_strategy(tp=0.5, sl=0.3, leverage=0, intial_margin=1000):
                         break
 
                     df_new = df_1min.iloc[-1:]
-                    strategy = Strategy(df_1min, "1m")
+                    strategy = SwingStrategy(df_1min, "1m")
                     df_signals = strategy.generate_signals()
                     atr = df_signals['atr'].iloc[-1]
                     currentprice = df_new['close'].iloc[-1]
@@ -199,6 +200,6 @@ def backtest_futures_strategy(tp=0.5, sl=0.3, leverage=0, intial_margin=1000):
 
     return signals  
 
-signals = backtest_futures_strategy_scalping(tp=0.01, sl=2, leverage=1, intial_margin=100000)
+signals = backtest_futures_strategy_scalping(tp=0.02, sl=1, leverage=1, intial_margin=100000)
 print(signals)
 
