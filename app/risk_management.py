@@ -1,35 +1,35 @@
 from loguru import logger
 
-from loguru import logger
 
 class RiskManagementFutures:
     def __init__(self, entry_price, current_price, risk_percent, profit_percent, atr, position_type, leverage, initial_margin, fees=0.0002):
         """
-        Enhanced Binance USDT Perpetual Futures Risk Management with precise fee handling
+        Enhanced Binance USDT Perpetual Futures Risk Management with precise fee handling.
         position_type: 1 (long) or -1 (short)
         fees: 0.0002 for Binance maker (0.02%)
+        profit_percent: net profit target (after all fees), e.g. 0.5 means +50% net on margin
         """
         self.raw_entry = entry_price  # Price without fees
         self.current_price = current_price
         self.risk_percent = risk_percent / 100
-        self.profit_percent = profit_percent / 100
+        self.profit_percent = profit_percent  # already as decimal, e.g. 0.5 for +50% net
         self.leverage = leverage
         self.initial_margin = initial_margin
         self.atr = atr
         self.fees = fees
         self.position_type = 1 if position_type == 1 else -1
         self.maintenance_margin = 0.005  # Binance USDT-M default
-        
-        # Effective entry price after fees
+
+        # Effective entry price after entry fee
         self.effective_entry = (self.raw_entry * (1 + self.fees) if self.position_type == 1 else self.raw_entry * (1 - self.fees))
-        
+
         self._validate_parameters()
         self.position_size = (initial_margin * leverage) / self.raw_entry
         self.trade_risk = initial_margin * self.risk_percent
         self._calculate_liquidation_price()
-        
+
         logger.info(f"Position initialized: {'LONG' if self.position_type == 1 else 'SHORT'} {self.position_size:.4f} contracts")
-        logger.info(f"Effective entry: ${self.effective_entry:.2f} (incl. fees)")
+        logger.info(f"Effective entry: ${self.effective_entry:.2f} (incl. entry fee)")
         logger.info(f"Risk: ${self.trade_risk:.2f} | Liq: ${self.liquidation_price:.2f}")
 
     def _validate_parameters(self):
@@ -50,34 +50,38 @@ class RiskManagementFutures:
 
     def calculate_pnl(self, exit_price):
         """Exact PnL calculation with fees on both sides"""
+        # Entry fee already included in self.effective_entry
         exit_price_net = exit_price * (1 - self.fees) if self.position_type == 1 else exit_price * (1 + self.fees)
-        
         if self.position_type == 1:
             return (exit_price_net - self.effective_entry) * self.position_size
         else:
             return (self.effective_entry - exit_price_net) * self.position_size
 
     def calculate_take_profit_price(self):
-        """Returns exact market price needed to hit profit target after all fees"""
-        target_profit = self.initial_margin * self.profit_percent
-        
+        """
+        Returns the exact market price needed to hit the desired net profit (after all fees).
+        profit_percent is the net profit target (e.g., 0.5 for +50% net on margin).
+        """
+        target_net_profit = self.initial_margin * self.profit_percent
+        # Solve for exit_price such that net PnL after all fees == target_net_profit
         if self.position_type == 1:
-            # For longs: (exit*(1-fee) - entry*(1+fee)) * size = target
-            return (target_profit/self.position_size + self.effective_entry) / (1 - self.fees)
+            # (exit*(1-fee) - entry*(1+fee)) * size = target_net_profit
+            # exit = [target_net_profit/size + entry*(1+fee)] / (1-fee)
+            return (target_net_profit / self.position_size + self.effective_entry) / (1 - self.fees)
         else:
-            # For shorts: (entry*(1-fee) - exit*(1+fee)) * size = target
-            return (self.effective_entry - target_profit/self.position_size) / (1 + self.fees)
+            # (entry*(1-fee) - exit*(1+fee)) * size = target_net_profit
+            # exit = [entry*(1-fee) - target_net_profit/size] / (1+fee)
+            return (self.effective_entry - target_net_profit / self.position_size) / (1 + self.fees)
 
     def calculate_stop_loss_price(self):
         """Returns exact price where loss equals risk% after fees"""
         max_loss = abs(self.initial_margin * self.risk_percent)
-        
         if self.position_type == 1:
             # (exit*(1-fee) - entry*(1+fee)) * size = -max_loss
-            return (self.effective_entry - max_loss/self.position_size) / (1 - self.fees)
+            return (self.effective_entry - max_loss / self.position_size) / (1 - self.fees)
         else:
             # (entry*(1-fee) - exit*(1+fee)) * size = -max_loss
-            return (self.effective_entry + max_loss/self.position_size) / (1 + self.fees)
+            return (self.effective_entry + max_loss / self.position_size) / (1 + self.fees)
 
     def should_exit(self):
         """Comprehensive exit check with precise calculations"""
@@ -93,7 +97,7 @@ class RiskManagementFutures:
         if self.position_type == 1:
             if self.current_price >= tp_price:
                 pnl = self.calculate_pnl(self.current_price)
-                print(f"🟢 TP HIT: {self.current_price:.2f} | Profit: ${pnl:.2f}")
+                print(f"🟢 TP HIT: {self.current_price:.2f} | Net Profit: ${pnl:.2f}")
                 return "PROFIT"
             elif self.current_price <= sl_price:
                 pnl = self.calculate_pnl(self.current_price)
@@ -102,7 +106,7 @@ class RiskManagementFutures:
         else:  # Short position
             if self.current_price <= tp_price:
                 pnl = self.calculate_pnl(self.current_price)
-                print(f"🟢 TP HIT: {self.current_price:.2f} | Profit: ${pnl:.2f}")
+                print(f"🟢 TP HIT: {self.current_price:.2f} | Net Profit: ${pnl:.2f}")
                 return "PROFIT"
             elif self.current_price >= sl_price:
                 pnl = self.calculate_pnl(self.current_price)

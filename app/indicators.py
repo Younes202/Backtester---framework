@@ -75,25 +75,9 @@ class Strategy:
         self.detect_cisd()
         self.data['Signal'] = 0
 
-        if self.timeframe_type == '1d':
-            # Bullish: 1, Bearish: -1, None: 0
-            self.data['Signal'] = np.where(
-                (self.data['EMA50'] > self.data['EMA200']) &
-                (self.data['RSI'] > 55) &
-                (self.data['close'] > self.data['VWAP']) &
-                (self.data['MACD'] > self.data['MACD_Signal']),
-                1,
-                np.where(
-                    (self.data['EMA50'] < self.data['EMA200']) &
-                    (self.data['RSI'] < 45) &
-                    (self.data['close'] < self.data['VWAP']) &
-                    (self.data['MACD'] < self.data['MACD_Signal']),
-                    -1,
-                    0
-                )
-            )
 
-        elif self.timeframe_type == '1h':
+
+        if self.timeframe_type == '1h':
             # Bullish: 1, Bearish: -1, None: 0
             self.data['Signal'] = np.where(
                 self.data['Bullish_Structure'] &
@@ -127,10 +111,124 @@ class Strategy:
                 )
             )
 
-        # Only drop rows where essential columns for signals are NaN (avoid dropping all rows due to rolling NaNs at the start)
-
         return self.data
         
+
+class SwingStrategy:
+    def __init__(self, data, timeframe_type):
+        self.data = data.copy()
+        self.timeframe_type = timeframe_type
+        self.data['timestamp'] = pd.to_datetime(self.data['timestamp'])
+        
+        # New price action columns
+        self.data['swing_high'] = np.nan
+        self.data['swing_low'] = np.nan
+        self.data['pullback_zone'] = False
+        self.data['breakout_confirmed'] = False
+
+    def calculate_swings(self, window=3):
+        """Identify swing highs/lows for pullback detection"""
+        self.data['swing_high'] = self.data['high'].rolling(window).apply(
+            lambda x: x.iloc[1] if (x.iloc[1] == x.max()) else np.nan, raw=False
+        )
+        self.data['swing_low'] = self.data['low'].rolling(window).apply(
+            lambda x: x.iloc[1] if (x.iloc[1] == x.min()) else np.nan, raw=False
+        )
+        return self.data
+
+    def detect_pullback_zones(self):
+        """Mark valid pullback/retest areas"""
+        self.data['pullback_zone'] = (
+            # Uptrend pullback condition
+            ((self.data['close'] > self.data['EMA200']) & 
+             (self.data['low'] <= self.data['EMA50']) & 
+             (self.data['low'].shift(1) > self.data['EMA50'])) |
+            
+            # Downtrend retest condition
+            ((self.data['close'] < self.data['EMA200']) & 
+             (self.data['high'] >= self.data['EMA50']) & 
+             (self.data['high'].shift(1) < self.data['EMA50']))
+        )
+        return self.data
+
+    def confirm_breakouts(self):
+        """Validate breakouts from consolidation"""
+        self.data['breakout_confirmed'] = (
+            # Bullish breakout
+            ((self.data['close'] > self.data['swing_high'].shift(1)) &
+             (self.data['volume'] > self.data['volume'].rolling(5).mean())) |
+            
+            # Bearish breakout
+            ((self.data['close'] < self.data['swing_low'].shift(1)) &
+             (self.data['volume'] > self.data['volume'].rolling(5).mean()))
+        )
+        return self.data
+
+    def generate_signals(self):
+        self.calculate_indicators()  # Your existing indicator code
+        self.calculate_swings()
+        self.detect_pullback_zones()
+        self.confirm_breakouts()
+        
+        if self.timeframe_type == '1h':
+            # Enhanced 1H signal with price action filters
+            self.data['Signal'] = np.where(
+                (self.data['Bullish_Structure']) &
+                (self.data['MACD'] > self.data['MACD_Signal']) &
+                (self.data['pullback_zone']) &  # New filter
+                (self.data['close'] > self.data['EMA50']),  # Breakout confirmation
+                1,
+                np.where(
+                    (self.data['Bearish_Structure']) &
+                    (self.data['MACD'] < self.data['MACD_Signal']) &
+                    (self.data['pullback_zone']) &  # New filter
+                    (self.data['close'] < self.data['EMA50']),  # Breakdown confirmation
+                    -1,
+                    0
+                )
+            )
+
+        elif self.timeframe_type == '15m':
+            # Enhanced 15M signal with tighter entry logic
+            self.data['Signal'] = np.where(
+                (self.data['close'] > self.data['EMA50']) &
+                (self.data['Bullish_Structure']) &
+                (self.data['pullback_zone']) &  # Must be in pullback zone
+                (self.data['breakout_confirmed']) &  # New breakout confirmation
+                (self.data['atr'] < self.data['atr'].rolling(20).mean()),
+                1,
+                np.where(
+                    (self.data['close'] < self.data['EMA50']) &
+                    (self.data['Bearish_Structure']) &
+                    (self.data['pullback_zone']) &  # Must be in retest zone
+                    (self.data['breakout_confirmed']) &  # New breakdown confirmation
+                    (self.data['atr'] < self.data['atr'].rolling(20).mean()),
+                    -1,
+                    0
+                )
+            )
+        return self.data
+
+
+
+
+""""
+if self.timeframe_type == '1d':
+    # Bullish: 1, Bearish: -1, None: 0
+    self.data['Signal'] = np.where(
+        (self.data['EMA50'] > self.data['EMA200']) &
+        (self.data['RSI'] > 55) &
+        (self.data['MACD'] > self.data['MACD_Signal']),
+        1,
+        np.where(
+            (self.data['EMA50'] < self.data['EMA200']) &
+            (self.data['RSI'] < 45) &
+            (self.data['MACD'] < self.data['MACD_Signal']),
+            -1,
+            0
+        )
+    )
+"""
 
 class FuturesStrategyScalping:
     def __init__(self, data):
