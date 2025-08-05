@@ -1,13 +1,16 @@
 from indicators import Strategy, SwingStrategy
 from risk_management import RiskManagementFutures
-
-
 from loguru import logger
 import pandas as pd
+import sys
+import numpy as np
+import matplotlib.pyplot as plt
+from mplfinance.original_flavor import candlestick_ohlc
+import matplotlib.dates as mdates
+from scipy.signal import find_peaks
 
 
 # Load file 3m timframe for btc/usdt contract  
-
 
 
 # this function fetches the most recent data from a CSV file based on a target timestamp
@@ -69,7 +72,6 @@ def backtest_futures_strategy_scalping(tp=0.5, sl=0.3, leverage=0, intial_margin
     time_considered_1h = None 
     df_path_1m = 'futures-klines/btcusdt_1_2024-06-22_2025-06-22.csv'
     df_path_1h = 'futures-klines/btcusdt_60_2024-06-22_2025-06-22.csv'
-    df_path_1D = 'futures-klines/btcusdt_D_2020-06-22_2025-06-22.csv'
     df_path_15m = 'futures-klines/btcusdt_15_2024-06-22_2025-06-22.csv'
 
     while True:
@@ -153,7 +155,7 @@ def backtest_futures_strategy_scalping(tp=0.5, sl=0.3, leverage=0, intial_margin
                         break
 
                     df_new = df_1min.iloc[-1:]
-                    strategy = SwingStrategy(df_1min, "1m")
+                    strategy = Strategy(df_1min, "1m")
                     df_signals = strategy.generate_signals()
                     atr = df_signals['atr'].iloc[-1]
                     currentprice = df_new['close'].iloc[-1]
@@ -199,7 +201,245 @@ def backtest_futures_strategy_scalping(tp=0.5, sl=0.3, leverage=0, intial_margin
             logger.info(f"No 15m signal generated at {df_recent['timestamp'].iloc[-1]}")
 
     return signals  
-
-signals = backtest_futures_strategy_scalping(tp=0.02, sl=1, leverage=1, intial_margin=100000)
+"""
+signals = backtest_futures_strategy_scalping(tp=0.03, sl=2, leverage=1, intial_margin=100000)
 print(signals)
+"""
 
+
+def backtest_futures_strategy_swing(tp=0.5, sl=0.3, leverage=0, intial_margin=1000):
+    signals = []
+    seen_entries = set()
+    seen_exits = set()
+
+    time_considered_1h = '2024-07-03 03:00:00'
+
+    df_path_1m = 'futures-klines/btcusdt_1_2024-06-22_2025-06-22.csv'
+    df_path_15m = 'futures-klines/btcusdt_15_2024-06-22_2025-06-22.csv'
+    df_path_1h = 'futures-klines/btcusdt_60_2024-06-22_2025-06-22.csv'
+    while True:
+        # Step 1: 1h Signal
+        df_1h = fetch_recent_data_from_csv(
+            csv_path=df_path_1h,
+            target_timestamp=time_considered_1h,
+            n_points=100,
+            augmentation_next=0
+        )
+        if df_1h.empty:
+            logger.warning("No 1h data fetched.")
+            break
+
+        logger.info(f"Fetched {len(df_1h)} rows for backtesting at 1h: {time_considered_1h}")
+        strategy_1h = Strategy(df_1h, '1h')
+        df_signals_1h = strategy_1h.generate_signals()
+        last_signal_1h = df_signals_1h['Signal'].iloc[-1] if not df_signals_1h.empty else 0
+
+        if last_signal_1h != 0:
+            entry_timestamp_1h = pd.Timestamp(df_signals_1h['timestamp'].iloc[-1])
+            if entry_timestamp_1h in seen_entries:
+                time_considered_1h = df_1h['timestamp'].iloc[-1] + pd.Timedelta(hours=1)
+                continue
+            logger.info(f"1h Signal generated at {entry_timestamp_1h}: {last_signal_1h}")
+
+            # Step 2: 15m confirmation
+            time_considered_15 = entry_timestamp_1h.floor('15min')
+            df_15m = fetch_recent_data_from_csv(
+                csv_path=df_path_15m,
+                target_timestamp=time_considered_15,
+                n_points=100,
+                augmentation_next=0
+            )
+            if df_15m.empty:
+                logger.warning("No 15m data fetched.")
+                break
+            strategy_15m = Strategy(df_15m, '15m')
+            df_signals_15m = strategy_15m.generate_signals()
+            last_signal_15m = df_signals_15m['Signal'].iloc[-1] if not df_signals_15m.empty else 0
+
+            if last_signal_15m == last_signal_1h:
+                logger.info(f"15m confirms 1h signal at {time_considered_15}: {last_signal_15m}")
+
+                signals.append({
+                    'timestamp entry': entry_timestamp_1h,
+                    'signal': last_signal_1h,
+                    'price entry': df_signals_1h['close'].iloc[-1]
+                })
+                seen_entries.add(entry_timestamp_1h)
+
+                # Execute position and monitor exit on 1m
+                priceorder = df_signals_1h['close'].iloc[-1]
+                target_profit = tp
+                stoploss = sl
+                position_type = last_signal_1h
+                entry_time = entry_timestamp_1h
+                i = 1
+                while True:
+                    df_1min = fetch_recent_data_from_csv(
+                        csv_path=df_path_1m,
+                        target_timestamp=entry_time,
+                        n_points=50,
+                        augmentation_next=i
+                    )
+                    if df_1min.empty or len(df_1min) <= 50:
+                        logger.warning("No more 1m data to check for exit.")
+                        break
+
+                    df_new = df_1min.iloc[-1:]
+                    strategy_1m = Strategy(df_1min, "1m")
+                    df_signals_1m = strategy_1m.generate_signals()
+                    atr = df_signals_1m['atr'].iloc[-1]
+                    currentprice = df_new['close'].iloc[-1]
+                    exit_timestamp = pd.Timestamp(df_new['timestamp'].iloc[-1])
+
+                    risk_management = RiskManagementFutures(
+                        priceorder, currentprice, stoploss, target_profit, atr, position_type,
+                        leverage=leverage, initial_margin=intial_margin, fees=0.0002
+                    )
+                    exit_status = risk_management.should_exit()
+                    if exit_status:
+                        if exit_timestamp not in seen_exits:
+                            pnl = risk_management.calculate_pnl(currentprice)
+                            logger.info(f"Exit condition met at {exit_timestamp}")
+                            signals.append({
+                                'timestamp exit': exit_timestamp,
+                                'exit price': currentprice,
+                                'exit_status': exit_status,
+                                'profit_or_loss': pnl
+                            })
+                            seen_exits.add(exit_timestamp)
+                        break
+                    else:
+                        logger.debug(f"Exit condition not met at {exit_timestamp}")
+                        i += 1
+
+        # Move to next 1h candle
+        time_considered_1h = df_1h['timestamp'].iloc[-1] + pd.Timedelta(hours=1)
+
+        print("Available signals are:", signals)
+
+    return signals
+
+# Example usage:
+signalss = backtest_futures_strategy_swing(tp=0.005, sl=1, leverage=1, intial_margin=100000)
+print(signalss)
+
+
+
+
+
+
+def import_data_handler(timeframe):
+    file_map = {
+        "1m": "/Users/mac/Desktop/Backtester--framework/futures-klines/btcusdt_1_2024-06-22_2025-06-22.csv",
+        "15m": "/Users/mac/Desktop/Backtester--framework/futures-klines/btcusdt_15_2024-06-22_2025-06-22.csv",
+        "1h": "/Users/mac/Desktop/Backtester--framework/futures-klines/btcusdt_60_2024-06-22_2025-06-22.csv",
+        "4h": "/Users/mac/Desktop/Backtester--framework/futures-klines/btcusdt_240_2020-06-22_2025-06-22.csv",
+        "1d": "/Users/mac/Desktop/Backtester--framework/futures-klines/btcusdt_D_2020-06-22_2025-06-22.csv"
+    }
+    data = pd.read_csv(file_map[timeframe]).tail(200)
+    
+    for col in ['open', 'high', 'low', 'close']:
+        data[col] = pd.to_numeric(data[col])
+    
+    if 'timestamp' in data.columns:
+        data['date'] = pd.to_datetime(data['timestamp'])
+    data.set_index('date', inplace=True)
+    return data
+
+def detect_valid_trend(data):
+    """Identify if a valid trend exists (2+ consecutive higher lows or lower highs)"""
+    highs = data['high'].values
+    lows = data['low'].values
+    
+    # Find swing points
+    high_idx = find_peaks(highs, prominence=1)[0]
+    low_idx = find_peaks(-lows, prominence=1)[0]
+    
+    # Check for uptrend (2+ higher lows)
+    if len(low_idx) >= 2:
+        higher_lows = all(lows[low_idx[i]] > lows[low_idx[i-1]] for i in range(1, len(low_idx)))
+        if higher_lows:
+            return ('uptrend', low_idx[-2:])
+    
+    # Check for downtrend (2+ lower highs)
+    if len(high_idx) >= 2:
+        lower_highs = all(highs[high_idx[i]] < highs[high_idx[i-1]] for i in range(1, len(high_idx)))
+        if lower_highs:
+            return ('downtrend', high_idx[-2:])
+    
+    return (None, None)
+
+def find_trend_zone_sr(data, trend_info):
+    """Find S/R only if valid trend exists"""
+    trend_type, swing_idx = trend_info
+    if trend_type is None:
+        return [], []  # No S/R without trend
+    
+    prices = data['high' if trend_type == 'downtrend' else 'low'].values
+    start_idx = swing_idx[0]
+    
+    # Find peaks/troughs within trend zone
+    if trend_type == 'uptrend':
+        sr_idx = find_peaks(-prices[start_idx:], prominence=0.5)[0] + start_idx
+        sr = [(i, prices[i]) for i in sr_idx]
+        return sr, []  # Only support in uptrend
+    
+    else:  # downtrend
+        sr_idx = find_peaks(prices[start_idx:], prominence=0.5)[0] + start_idx
+        sr = [(i, prices[i]) for i in sr_idx]
+        return [], sr  # Only resistance in downtrend
+
+def plot_chart_with_conditional_sr(data):
+    plt.style.use('ggplot')
+    fig, ax = plt.subplots(figsize=(16, 8))
+    
+    # Candlestick plot
+    dates = mdates.date2num(data.index.to_pydatetime())
+    ohlc = np.column_stack([dates, data['open'], data['high'], data['low'], data['close']])
+    candlestick_ohlc(ax, ohlc, width=0.0005, colorup='g', colordown='r', alpha=0.8)
+    
+    # Detect trend
+    trend_info = detect_valid_trend(data)
+    trend_type, swing_idx = trend_info
+    
+    if trend_type is not None:
+        # Draw trend line
+        x = [dates[swing_idx[0]], dates[swing_idx[1]]]
+        y = [data['low' if trend_type == 'uptrend' else 'high'].iloc[swing_idx[0]], 
+             data['low' if trend_type == 'uptrend' else 'high'].iloc[swing_idx[1]]]
+        color = 'blue' if trend_type == 'uptrend' else 'red'
+        ax.plot(x, y, color=color, linewidth=2, label=f'{trend_type.capitalize()} Trend')
+        
+        # Find and plot S/R
+        support, resistance = find_trend_zone_sr(data, trend_info)
+        
+        for idx, level in support:
+            ax.axhline(y=level, color='green', linestyle='--', alpha=0.7)
+            ax.text(dates[idx], level, f'Support\n{level:.2f}', 
+                    ha='center', va='top', color='green',
+                    bbox=dict(facecolor='white', alpha=0.7))
+        
+        for idx, level in resistance:
+            ax.axhline(y=level, color='red', linestyle='--', alpha=0.7)
+            ax.text(dates[idx], level, f'Resistance\n{level:.2f}', 
+                    ha='center', va='bottom', color='red',
+                    bbox=dict(facecolor='white', alpha=0.7))
+    
+    # Chart formatting
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
+    ax.set_title('Conditional Support/Resistance', fontsize=16)
+    ax.set_ylabel('Price', fontsize=12)
+    ax.grid(True, alpha=0.3)
+    if trend_type is not None:
+        ax.legend()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+
+if __name__ == "__main__":
+    timeframe = "1m"
+    data = import_data_handler(timeframe)
+    if data is not None:
+        plot_chart_with_conditional_sr(data)
+    else:
+        print("Failed to load data")

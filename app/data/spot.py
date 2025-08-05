@@ -114,9 +114,9 @@ class BinanceSpotKlines:
 async def main():
     # Define parameters
     symbol = "BTCUSDT"
-    interval = "15m"  # 1-day interval
-    start_time = datetime(2023, 1, 1)
-    end_time = datetime(2025, 4, 30, 23, 59, 59)  # Last second of May 29, 2025
+    interval = "1d"  # 1-day interval
+    start_time = datetime(2019, 1, 1)
+    end_time = datetime(2022, 12, 31, 23, 59, 59)  # Last second of May 29, 2025
 
     # Initialize the Binance Spot Klines class
     klines_fetcher = BinanceSpotKlines(symbol, interval, start_time, end_time)

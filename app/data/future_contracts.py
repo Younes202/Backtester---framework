@@ -6,7 +6,7 @@ import os
 def fetch_bybit_klines_save_csv(
     symbol="BTCUSDT",
     category="linear",
-    interval="D",  
+    interval="5",  
     start_time="2024-06-22",
     end_time="2025-06-22",
     limit=1000,
@@ -115,7 +115,10 @@ def fetch_bybit_klines_save_csv(
 # Run it
 fetch_bybit_klines_save_csv(
     symbol="BTCUSDT",
-    interval="D",
+    interval="5",
     start_time="2020-06-22",
     end_time="2025-06-22"
 )
+
+
+
