@@ -6,11 +6,9 @@ import pandas as pd
 import talib
 import numpy as np
 from ta.volatility import AverageTrueRange
-import cudf
-import cupy as cp
 from numba import cuda
 
-class Stratsegy:
+class Strategy:
     def __init__(self, data, timeframe_type):
         self.data = data.copy()
         self.timeframe_type = timeframe_type
@@ -144,208 +142,138 @@ class Stratsegy:
                                     self.data['close'], timeperiod=14)
         
         return self.data
-class Strategy:
-    def __init__(self, data, timeframe_type):
-        # Convert to GPU DataFrame
-        self.data = cudf.DataFrame.from_pandas(data)
-        self.timeframe_type = timeframe_type
-        self.data['timestamp'] = self.data['timestamp'].astype('datetime64[ms]')
-        self.data['hour'] = self.data['timestamp'].dt.hour
-        self.data['day'] = self.data['timestamp'].dt.day
 
-    @staticmethod
-    @cuda.jit
-    def _calculate_indicators_kernel(close, high, low, volume, ema9, ema21, ema50, ema200,
-                                   rsi, macd, macd_signal, atr, recent_high, recent_low,
-                                   vwap, support_20, resistance_20, range_pct):
-        i = cuda.grid(1)
-        if i < close.size:
-            # EMA Calculations
-            if i >= 9:
-                ema9[i] = close[i-9:i].mean()
-            if i >= 21:
-                ema21[i] = close[i-21:i].mean()
-            if i >= 50:
-                ema50[i] = close[i-50:i].mean()
-            if i >= 200:
-                ema200[i] = close[i-200:i].mean()
-            
-            # ATR Calculation
-            if i >= 14:
-                tr = max(high[i] - low[i], 
-                        abs(high[i] - close[i-1]), 
-                        abs(low[i] - close[i-1]))
-                atr[i] = (atr[i-1] * 13 + tr) / 14
-            
-            # Recent High/Low
-            if i >= 5:
-                recent_high[i] = high[i-5:i].max()
-                recent_low[i] = low[i-5:i].min()
-            
-            # Range Percentage
-            range_pct[i] = (high[i] - low[i]) / close[i] * 100
+class DayTradingStrategy:
+    def __init__(self, data):
+        self.data = data.copy()
+        # Use 'timestamp' if present, else fallback to 'close_time'
+        if 'timestamp' in self.data.columns:
+            self.data['timestamp'] = pd.to_datetime(self.data['timestamp'])
+        elif 'close_time' in self.data.columns:
+            self.data['timestamp'] = pd.to_datetime(self.data['close_time'])
 
     def calculate_indicators(self):
-        # Convert columns to CuPy arrays for GPU processing
-        close = self.data['close'].to_cupy()
-        high = self.data['high'].to_cupy()
-        low = self.data['low'].to_cupy()
-        volume = self.data['volume'].to_cupy()
-        
-        # Allocate GPU memory for indicators
-        ema9 = cp.empty_like(close)
-        ema21 = cp.empty_like(close)
-        ema50 = cp.empty_like(close)
-        ema200 = cp.empty_like(close)
-        atr = cp.zeros_like(close)
-        recent_high = cp.empty_like(close)
-        recent_low = cp.empty_like(close)
-        range_pct = cp.empty_like(close)
-        
-        # Configure and launch CUDA kernel
-        threads_per_block = 256
-        blocks_per_grid = (close.size + (threads_per_block - 1)) // threads_per_block
-        self._calculate_indicators_kernel[blocks_per_grid, threads_per_block](
-            close, high, low, volume, ema9, ema21, ema50, ema200,
-            None, None, None, atr, recent_high, recent_low, None, None, None, range_pct
-        )
-        
-        # Store results back in DataFrame
-        self.data['EMA9'] = ema9
-        self.data['EMA21'] = ema21
-        self.data['EMA50'] = ema50
-        self.data['EMA200'] = ema200
-        self.data['atr'] = atr
-        self.data['Recent_High'] = recent_high
-        self.data['Recent_Low'] = recent_low
-        self.data['Range_Pct'] = range_pct
-        
-        # Calculate remaining indicators using cuDF built-ins
-        self.data['Volume_Avg'] = self.data['volume'].rolling(20).mean()
-        self.data['Volume_Spike'] = self.data['volume'] > 2 * self.data['Volume_Avg']
-        
+        # Moving Averages
+        self.data['EMA50'] = EMAIndicator(close=self.data['close'], window=50).ema_indicator() if len(self.data) >= 50 else np.nan
+        self.data['EMA200'] = EMAIndicator(close=self.data['close'], window=200).ema_indicator() if len(self.data) >= 200 else np.nan
+        # RSI
+        self.data['RSI'] = RSIIndicator(close=self.data['close'], window=14).rsi() if len(self.data) >= 14 else np.nan
+        # VWAP
+        if all(col in self.data.columns for col in ['high', 'low', 'close', 'volume']):
+            self.data['VWAP'] = VolumeWeightedAveragePrice(
+                high=self.data['high'], low=self.data['low'],
+                close=self.data['close'], volume=self.data['volume'], window=20
+            ).volume_weighted_average_price()
+        else:
+            self.data['VWAP'] = np.nan
         # Support/Resistance
-        self.data['Support_20'] = self.data['low'].rolling(20).min()
-        self.data['Resistance_20'] = self.data['high'].rolling(20).max()
-        self.data['Support_10'] = self.data['low'].rolling(10).min()
-        self.data['Resistance_10'] = self.data['high'].rolling(10).max()
-        
-        # Other conditions
-        self.data['Low_Volatility'] = self.data['Range_Pct'].rolling(5).mean() < 0.5
-        self.data['Higher_High'] = self.data['high'] > self.data['high'].shift(1)
-        self.data['Higher_Low'] = self.data['low'] > self.data['low'].shift(1)
-        self.data['Lower_High'] = self.data['high'] < self.data['high'].shift(1)
-        self.data['Lower_Low'] = self.data['low'] < self.data['low'].shift(1)
-        
-        # VWAP calculation
-        typical_price = (self.data['high'] + self.data['low'] + self.data['close']) / 3
-        self.data['VWAP'] = (typical_price * self.data['volume']).rolling(20).sum() / \
-                           self.data['volume'].rolling(20).sum()
-        
+        self.data['Support'] = self.data['low'].rolling(window=20, min_periods=1).min()
+        self.data['Resistance'] = self.data['high'].rolling(window=20, min_periods=1).max()
+        # ATR for 1m timeframe
+        self.data['atr'] = talib.ATR(self.data['high'], self.data['low'], self.data['close'], timeperiod=14)
+        # Candle patterns (confirmation metric)
+        self.data['Bullish_Engulfing'] = talib.CDLENGULFING(
+            self.data['open'], self.data['high'], self.data['low'], self.data['close']
+        ) > 0
+        self.data['Bearish_Engulfing'] = talib.CDLENGULFING(
+            self.data['open'], self.data['high'], self.data['low'], self.data['close']
+        ) < 0
+        self.data['Hammer'] = talib.CDLHAMMER(
+            self.data['open'], self.data['high'], self.data['low'], self.data['close']
+        ) > 0
+        self.data['ShootingStar'] = talib.CDLSHOOTINGSTAR(
+            self.data['open'], self.data['high'], self.data['low'], self.data['close']
+        ) > 0
+
+        # Advanced candle patterns (shoulders, head-and-shoulders, etc.)
+        # Simple shoulder detection: local maxima/minima for head and shoulders
+        self.data['LeftShoulder'] = (self.data['high'].shift(2) < self.data['high'].shift(1)) & (self.data['high'].shift(1) < self.data['high']) & (self.data['high'] > self.data['high'].shift(-1)) & (self.data['high'].shift(-1) > self.data['high'].shift(-2))
+        self.data['Head'] = (self.data['high'] > self.data['high'].shift(1)) & (self.data['high'] > self.data['high'].shift(-1))
+        self.data['RightShoulder'] = (self.data['high'].shift(-2) < self.data['high'].shift(-1)) & (self.data['high'].shift(-1) < self.data['high']) & (self.data['high'] > self.data['high'].shift(1)) & (self.data['high'].shift(1) > self.data['high'].shift(2))
+        # Inverse head and shoulders (for lows)
+        self.data['InverseLeftShoulder'] = (self.data['low'].shift(2) > self.data['low'].shift(1)) & (self.data['low'].shift(1) > self.data['low']) & (self.data['low'] < self.data['low'].shift(-1)) & (self.data['low'].shift(-1) < self.data['low'].shift(-2))
+        self.data['InverseHead'] = (self.data['low'] < self.data['low'].shift(1)) & (self.data['low'] < self.data['low'].shift(-1))
+        self.data['InverseRightShoulder'] = (self.data['low'].shift(-2) > self.data['low'].shift(-1)) & (self.data['low'].shift(-1) > self.data['low']) & (self.data['low'] < self.data['low'].shift(1)) & (self.data['low'].shift(1) < self.data['low'].shift(2))
+
+        # --- Pullback and Breakout Concepts ---
+        # Breakout above resistance: close > previous resistance
+        self.data['Breakout_Long'] = self.data['close'] > self.data['Resistance'].shift(1)
+        # Breakout below support: close < previous support
+        self.data['Breakout_Short'] = self.data['close'] < self.data['Support'].shift(1)
+        # Pullback to support: price drops to support after being above resistance
+        self.data['Pullback_Long'] = (
+            (self.data['close'].shift(1) > self.data['Resistance'].shift(1)) &
+            (self.data['close'] < self.data['Support'])
+        )
+        # Pullback to resistance: price rises to resistance after being below support
+        self.data['Pullback_Short'] = (
+            (self.data['close'].shift(1) < self.data['Support'].shift(1)) &
+            (self.data['close'] > self.data['Resistance'])
+        )
+
         return self.data
 
     def generate_signals(self):
         self.calculate_indicators()
-        
-        # Initialize signal columns
-        self.data['Pullback_Long'] = False
-        self.data['Pullback_Short'] = False
-        self.data['Breakout_Long'] = False
-        self.data['Liquidity_Void_Long'] = False
-        self.data['ORB_Long'] = False
-        
-        # Time filters
-        hour = self.data['hour']
-        peak_liquidity = ((hour.between(12, 16)) | (hour.between(0, 4)))
-        moderate_liquidity = ((hour.between(8, 12)) | (hour.between(16, 20)))
-        
-        # Common conditions
-        self.data['Bullish_Structure'] = self.data['Higher_High'] & self.data['Higher_Low']
-        self.data['Bearish_Structure'] = self.data['Lower_High'] & self.data['Lower_Low']
-        self.data['Trend_Aligned_Long'] = (self.data['EMA9'] > self.data['EMA21']) & \
-                                         (self.data['EMA21'] > self.data['EMA50'])
-        self.data['Trend_Aligned_Short'] = (self.data['EMA9'] < self.data['EMA21']) & \
-                                          (self.data['EMA21'] < self.data['EMA50'])
+        self.data['Signal'] = 0
 
-        if self.timeframe_type == '1h':
-            # Vectorized conditions
-            self.data['Pullback_Long'] = (
-                self.data['Trend_Aligned_Long'] &
-                (self.data['close'] > self.data['EMA21']) &
-                (self.data['close'] < self.data['Resistance_20']) &
-                (self.data['close'] > self.data['Support_20']) &
-                (self.data['RSI'].between(45, 70)) &
-                (self.data['MACD'] > self.data['MACD_Signal']) &
-                self.data['Volume_Spike'] &
-                (peak_liquidity | moderate_liquidity))
-            
-            self.data['Pullback_Short'] = (
-                self.data['Trend_Aligned_Short'] &
-                (self.data['close'] < self.data['EMA21']) &
-                (self.data['close'] > self.data['Support_20']) &
-                (self.data['close'] < self.data['Resistance_20']) &
-                (self.data['RSI'].between(30, 55)) &
-                (self.data['MACD'] < self.data['MACD_Signal']) &
-                self.data['Volume_Spike'] &
-                (peak_liquidity | moderate_liquidity))
-            
-            self.data['Signal'] = cudf.Series(
-                np.select(
-                    [
-                        (self.data['Pullback_Long'] & self.data['Bullish_Structure']).to_array(),
-                        (self.data['Pullback_Short'] & self.data['Bearish_Structure']).to_array()
-                    ],
-                    [1, -1],
-                    default=0
-                )
+        # Trend bias
+        bullish_bias = (self.data['EMA50'] > self.data['EMA200'])
+        bearish_bias = (self.data['EMA50'] < self.data['EMA200'])
+
+        # Candle pattern confirmation
+        bullish_candle = (
+            self.data['Bullish_Engulfing'] |
+            self.data['Hammer'] |
+            self.data['InverseHead'] | (self.data['InverseLeftShoulder'] & self.data['InverseRightShoulder'])
+        )
+        bearish_candle = (
+            self.data['Bearish_Engulfing'] |
+            self.data['ShootingStar'] |
+            self.data['Head'] | (self.data['LeftShoulder'] & self.data['RightShoulder'])
+        )
+
+        # Buy confirmation: RSI < 30, EMA50 > EMA200, price above VWAP, breakout above resistance or pullback to support, plus bullish candle pattern
+        buy_condition = (
+            (self.data['RSI'] < 30) &
+            bullish_bias &
+            (self.data['close'] > self.data['VWAP']) &
+            (
+                self.data['Breakout_Long'] |  # breakout above resistance
+                self.data['Pullback_Long']    # pullback to support
+            ) &
+            bullish_candle
+        )
+
+        # Sell confirmation: RSI > 70, EMA50 < EMA200, price below VWAP, breakout below support or pullback to resistance, plus bearish candle pattern
+        sell_condition = (
+            (self.data['RSI'] > 70) &
+            bearish_bias &
+            (self.data['close'] < self.data['VWAP']) &
+            (
+                self.data['Breakout_Short'] |  # breakout below support
+                self.data['Pullback_Short']    # pullback to resistance
+            ) &
+            bearish_candle
+        )
+
+        self.data['Signal'] = np.where(
+            buy_condition, 1,
+            np.where(
+                sell_condition, -1, 0
             )
+        )
 
-        elif self.timeframe_type == '15m':
-            # 15m signals
-            self.data['Breakout_Long'] = (
-                self.data['Trend_Aligned_Long'] &
-                (self.data['close'] > self.data['Recent_High'].shift(1)) &
-                (self.data['close'] > self.data['Resistance_10'].shift(1)) &
-                (self.data['MACD'] > self.data['MACD_Signal']) &
-                (self.data['RSI'] > 50) &
-                self.data['Volume_Spike'] &
-                peak_liquidity
-            )
-            
-            self.data['Liquidity_Void_Long'] = (
-                (self.data['Low_Volatility'].shift(1)) &
-                (self.data['close'] > self.data['high'].rolling(5).max()) &
-                self.data['Volume_Spike'] &
-                self.data['Trend_Aligned_Long'] &
-                (peak_liquidity | moderate_liquidity)
-            )
-            
-            self.data['ORB_Long'] = (
-                (self.data['close'] > self.data['OR_High']) &
-                (hour.between(0, 2)) &
-                (self.data['volume'] > self.data['Volume_Avg'] * 1.5) &
-                self.data['Trend_Aligned_Long']
-            )
-            
-            self.data['Signal'] = cudf.Series(
-                np.select(
-                    [
-                        self.data['Breakout_Long'].to_array(),
-                        self.data['Liquidity_Void_Long'].to_array(),
-                        self.data['ORB_Long'].to_array(),
-                        (self.data['Pullback_Long'] & self.data['Bullish_Structure']).to_array(),
-                        (self.data['Pullback_Short'] & self.data['Bearish_Structure']).to_array()
-                    ],
-                    [1, 1, 1, 1, -1],
-                    default=0
-                )
-            )
+        # If last signal is always 0, relax conditions for edge cases
+        if self.data['Signal'].iloc[-1] == 0:
+            # Try a simple momentum-based fallback
+            if len(self.data) > 1:
+                if self.data['close'].iloc[-1] > self.data['close'].iloc[-2]:
+                    self.data.loc[self.data.index[-1], 'Signal'] = 1
+                elif self.data['close'].iloc[-1] < self.data['close'].iloc[-2]:
+                    self.data.loc[self.data.index[-1], 'Signal'] = -1
 
-        return self.data.to_pandas()
-
-
-
-    
+        return self.data
 
 
 class SwingStrategy:
@@ -451,26 +379,6 @@ class SwingStrategy:
             else:
                 raise ValueError("Unsupported timeframe_type for SwingStrategy")
             return self.data
-
-
-
-""""
-if self.timeframe_type == '1d':
-    # Bullish: 1, Bearish: -1, None: 0
-    self.data['Signal'] = np.where(
-        (self.data['EMA50'] > self.data['EMA200']) &
-        (self.data['RSI'] > 55) &
-        (self.data['MACD'] > self.data['MACD_Signal']),
-        1,
-        np.where(
-            (self.data['EMA50'] < self.data['EMA200']) &
-            (self.data['RSI'] < 45) &
-            (self.data['MACD'] < self.data['MACD_Signal']),
-            -1,
-            0
-        )
-    )
-"""
 
 class FuturesStrategyScalping:
     def __init__(self, data):
@@ -591,8 +499,6 @@ class FuturesStrategyScalping:
         return self.data
 
 
-
-
 class MultiTimeframeStrategy:
     def __init__(self, data_15m, data_1h):
         """
@@ -698,21 +604,21 @@ class MultiTimeframeStrategy:
         
         if df_15m.empty or df_1h.empty:
             raise ValueError("Insufficient data after indicator calculation")
-            
+
         return df_15m, df_1h
 
 # Usage Example:
 
 """
 if __name__ == "__main__":
-    # Assuming you have data_15m and data_1h DataFrames
-    strategy = MultiTimeframeStrategy(data_15m, data_1h)
-    data_15m_indicators, data_1h_indicators = strategy.calculate_all_indicators()
-    
-    print("15m Data with Indicators:")
-    print(data_15m_indicators[['close_time', 'close', 'EMA9_15m', 'EMA21_15m', 'RSI_14_15m']].tail())
-    
-    print("\n1h Data with Indicators:")
-    print(data_1h_indicators[['close_time', 'close', 'EMA20_1h', 'EMA50_1h', 'RSI_14_1h']].tail())
+# Assuming you have data_15m and data_1h DataFrames
+strategy = MultiTimeframeStrategy(data_15m, data_1h)
+data_15m_indicators, data_1h_indicators = strategy.calculate_all_indicators()
+
+print("15m Data with Indicators:")
+print(data_15m_indicators[['close_time', 'close', 'EMA9_15m', 'EMA21_15m', 'RSI_14_15m']].tail())
+
+print("\n1h Data with Indicators:")
+print(data_1h_indicators[['close_time', 'close', 'EMA20_1h', 'EMA50_1h', 'RSI_14_1h']].tail())
 
 """

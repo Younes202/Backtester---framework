@@ -1,11 +1,9 @@
 import httpx
 import pandas as pd
-from datetime import datetime,timedelta
+from datetime import datetime
 from loguru import logger
 import os
-from connection import get_db, Database
-from model import Kline, Kline_BTC, Kline_ETH, Kline_BNB, Kline_ADA, Kline_DOT, Kline_BTCS
-from sqlalchemy.orm import Session
+
 import asyncio
 # Raw Package
 
@@ -114,9 +112,9 @@ class BinanceSpotKlines:
 async def main():
     # Define parameters
     symbol = "BTCUSDT"
-    interval = "1d"  # 1-day interval
-    start_time = datetime(2019, 1, 1)
-    end_time = datetime(2022, 12, 31, 23, 59, 59)  # Last second of May 29, 2025
+    interval = "15m"  # 1-minute interval
+    start_time = datetime(2025, 6, 1)
+    end_time = datetime(2025, 8, 1, 23, 59, 59)  # Last second of August 1, 2025
 
     # Initialize the Binance Spot Klines class
     klines_fetcher = BinanceSpotKlines(symbol, interval, start_time, end_time)
