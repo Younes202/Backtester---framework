@@ -115,9 +115,9 @@ def fetch_bybit_klines_save_csv(
 # Run it
 fetch_bybit_klines_save_csv(
     symbol="BTCUSDT",
-    interval="15",
-    start_time="2025-07-01",
-    end_time="2025-08-01"
+    interval="30",
+    start_time="2025-01-01",
+    end_time="2025-09-01"
 )
 
 

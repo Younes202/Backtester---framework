@@ -161,7 +161,7 @@ def backtest_futures_strategy_scalping(tp=0.5, sl=0.3, leverage=0, intial_margin
                     df_new = df_1min.iloc[-1:]
                     strategy = Strategy(df_1min, "1m")
                     df_signals = strategy.generate_signals()
-                    atr = df_signals['atr'].iloc[-1]
+                    atr = df_signals['atr'].iloc[-1] if not df_signals.empty else 0
                     currentprice = df_new['close'].iloc[-1]
                     exit_timestamp = pd.Timestamp(df_new['timestamp'].iloc[-1])
 
@@ -205,11 +205,6 @@ def backtest_futures_strategy_scalping(tp=0.5, sl=0.3, leverage=0, intial_margin
             logger.info(f"No 15m signal generated at {df_recent['timestamp'].iloc[-1]}")
 
     return signals  
-"""
-signals = backtest_futures_strategy_scalping(tp=0.03, sl=2, leverage=1, intial_margin=100000)
-print(signals)
-"""
-
 
 def backtest_futures_strategy_swing(tp=0.5, sl=0.3, leverage=0, intial_margin=1000):
     signals = []
@@ -242,7 +237,7 @@ def backtest_futures_strategy_swing(tp=0.5, sl=0.3, leverage=0, intial_margin=10
         if last_signal_1h != 0:
             entry_timestamp_1h = pd.Timestamp(df_signals_1h['timestamp'].iloc[-1])
             if entry_timestamp_1h in seen_entries:
-                time_considered_1h = df_1h['timestamp'].iloc[-1] + pd.Timedelta(minitues=15)
+                time_considered_1h = df_1h['timestamp'].iloc[-1] + pd.Timedelta(minutes=15)
                 continue
             logger.info(f"1h Signal generated at {entry_timestamp_1h}: {last_signal_1h}")
 
@@ -318,114 +313,78 @@ def backtest_futures_strategy_swing(tp=0.5, sl=0.3, leverage=0, intial_margin=10
                         i += 1
 
         # Move to next 1h candle
-        time_considered_1h = df_1h['timestamp'].iloc[-1] + pd.Timedelta(minitues=15)
+        time_considered_1h = df_1h['timestamp'].iloc[-1] + pd.Timedelta(minutes=15)
 
         print("Available signals are:", signals)
 
     return signals
-# Example usage:
-"""signalss = backtest_futures_strategy_swing(tp=0.005, sl=1, leverage=1, intial_margin=100000)
-print(signalss)"""
 
-"""
-def backtest_futures_strategy_amir(tp, sl, leverage, intial_margin):
+
+
+def backtest_futures_strategy_amir_(
+    tp=0.5,
+    sl=0.3,
+    leverage=0,
+    intial_margin=1000,
+    output_csv="backtest_results.csv",
+    df_path_1m='/Users/mac/Desktop/work-project/tadawul-ma/technical-analysis/Gold-Analysis/data-1m.csv',
+    df_path_1h='/Users/mac/Desktop/work-project/tadawul-ma/technical-analysis/Gold-Analysis/data-1h.csv',
+    df_path_15m='/Users/mac/Desktop/work-project/tadawul-ma/technical-analysis/Gold-Analysis/data-15m.csv'
+):
     signals = []
 
-    df_path_1m = 'futures-klines/btcusdt_1_2024-08-1_2025-08-01.csv'
-    df_path_30m = 'futures-klines/btcusdt_30_2024-08-1_2025-08-01.csv'
-    time_considered_30 = '2024-08-03 03:30:00'
-    while True:
-        df_30m = fetch_recent_data_from_csv(
-            csv_path=df_path_30m,
-            target_timestamp=time_considered_30,
-            augmentation_next=0
-    )
-        logger.info(f"data :  {df_30m.head(5)}")
+    # Load 1h data just once to get all timestamps we’ll iterate over
+    df_all_1h = pd.read_csv(df_path_1h)
+    df_all_1h['timestamp'] = pd.to_datetime(df_all_1h['timestamp'])
+    all_timestamps = df_all_1h['timestamp'].tolist()
 
-        if df_30m.empty:
-            logger.warning("No 30m data fetched.")
-            break
-        
-        logger.info(f"Fetched {len(df_30m)} rows for backtesting at 30m: {time_considered_30}")
-        strategy_30m = DayTradingStrategy(df_30m)
-        df_signals_30m = strategy_30m.generate_signals()
-        last_signal_30m = df_signals_30m['Signal'].iloc[-1] if not df_signals_30m.empty else 0
-        print("\n Last Signal detected is : ", last_signal_30m)
+    for time_considered in all_timestamps:
+        logger.debug(f"Backtesting at 1h timestamp: {time_considered}")
 
-
-backtest_futures_strategy_amir(tp=0.005, sl=1, leverage=1, intial_margin=100000)"""
-
-def is_london_session(timestamp):
-    """
-    Returns True if the timestamp is within London session (08:00 to 16:00 UTC).
-    """
-    ts = pd.Timestamp(timestamp)
-    hour = ts.hour
-    return 8 <= hour < 16
-
-def backtest_futures_strategy_amir_(tp=0.5, sl=0.3, leverage=0, intial_margin=1000, output_csv="backtest_results.csv"):
-    signals = []
-    seen_entries = set()
-    seen_exits = set()
-
-    time_considered_1h = '2025-06-10 00:00:00'
-
-    df_path_1m = '/Users/mac/Desktop/work-project/tadawul-ma/technical-analysis/Gold-Analysis/data-1m.csv'
-    df_path_1h = '/Users/mac/Desktop/work-project/tadawul-ma/technical-analysis/Gold-Analysis/data-15m.csv'
-
-    while True:
-        # Check if current time is in London session before searching for opportunity
-        if not is_london_session(time_considered_1h):
-            # Move to next 15m candle
-            time_considered_1h = pd.Timestamp(time_considered_1h) + pd.Timedelta(minutes=15)
-            continue
-
-        # Step 1: 1h Signal
+        # Step 1: get 1h data up to time_considered
         df_1h = fetch_recent_data_from_csv(
             csv_path=df_path_1h,
-            target_timestamp=time_considered_1h,
+            target_timestamp=time_considered,
             n_points=100,
             augmentation_next=0
         )
-        if df_1h.empty:
-            logger.warning("No 1h data fetched.")
-            break
 
-        logger.info(f"Fetched {len(df_1h)} rows for backtesting at 1h: {time_considered_1h}")
-        strategy_1h = DayTradingStrategy(df_1h)
-        df_signals_1h = strategy_1h.generate_signals()
-        last_signal_1h = df_signals_1h['Signal'].iloc[-1] if not df_signals_1h.empty else 0
+        # Step 2: get 15m data up to time_considered
+        df_15m = fetch_recent_data_from_csv(
+            csv_path=df_path_15m,
+            target_timestamp=time_considered,
+            n_points=100,
+            augmentation_next=0
+        )
 
-        cycle_end_time = None  # Track when the cycle ends
+        if df_1h.empty or df_15m.empty:
+            logger.warning(f"No data available at {time_considered}, skipping...")
+            continue
 
-        if last_signal_1h != 0:
-            entry_timestamp_1h = pd.Timestamp(df_signals_1h['timestamp'].iloc[-1])
-            if entry_timestamp_1h in seen_entries:
-                # If already seen, skip to next cycle
-                time_considered_1h = entry_timestamp_1h + pd.Timedelta(minutes=15)
-                continue
-            logger.info(f"1h Signal generated at {entry_timestamp_1h}: {last_signal_1h}")
+        strategy = DayTradingStrategy(data_15m=df_15m, data_1h=df_1h, Atr=None)
+        df_signals = strategy.generate_signals()
+        last_signal = df_signals['Signal'].iloc[-1] if not df_signals.empty else 0
+
+        if last_signal != 0:
+            entry_timestamp = pd.Timestamp(df_signals['timestamp'].iloc[-1])
+            priceorder = df_signals['close'].iloc[-1]
 
             entry_record = {
-                'entry_time': entry_timestamp_1h,
+                'entry_time': entry_timestamp,
+                'price_entry': priceorder,
+                'signal_type': last_signal,
                 'exit_time': None,
-                'signal_type': last_signal_1h,
                 'profit_or_loss': None,
-                'win_or_loss': None  # Add win/loss column
+                'win_or_loss': None
             }
-            seen_entries.add(entry_timestamp_1h)
 
-            # Execute position and monitor exit on 1m
-            priceorder = df_signals_1h['close'].iloc[-1]
-            target_profit = tp
-            stoploss = sl
-            position_type = last_signal_1h
-            entry_time = entry_timestamp_1h
+            # Monitor exit on 1m data after entry
             i = 1
+            exit_timestamp = None
             while True:
                 df_1min = fetch_recent_data_from_csv(
                     csv_path=df_path_1m,
-                    target_timestamp=entry_time,
+                    target_timestamp=entry_timestamp,
                     n_points=50,
                     augmentation_next=i
                 )
@@ -434,46 +393,38 @@ def backtest_futures_strategy_amir_(tp=0.5, sl=0.3, leverage=0, intial_margin=10
                     break
 
                 df_new = df_1min.iloc[-1:]
-                strategy_1m = DayTradingStrategy(df_1min)
+                strategy_1m = DayTradingStrategy(Atr=df_new)
                 df_signals_1m = strategy_1m.generate_signals()
                 atr = df_signals_1m['atr'].iloc[-1]
+
                 currentprice = df_new['close'].iloc[-1]
                 exit_timestamp = pd.Timestamp(df_new['timestamp'].iloc[-1])
 
                 risk_management = RiskManagementFutures(
-                    priceorder, currentprice, stoploss, target_profit, atr, position_type,
+                    priceorder, currentprice, sl, tp, atr, last_signal,
                     leverage=leverage, initial_margin=intial_margin, fees=0.0002
                 )
                 exit_status = risk_management.should_exit()
                 if exit_status:
-                    if exit_timestamp not in seen_exits:
-                        pnl = risk_management.calculate_pnl(currentprice)
-                        logger.info(f"Exit condition met at {exit_timestamp}")
-                        entry_record['exit_time'] = exit_timestamp
-                        entry_record['profit_or_loss'] = pnl
-                        entry_record['win_or_loss'] = "win" if pnl > 0 else "loss"  # Set win/loss
-                        signals.append(entry_record)
-                        seen_exits.add(exit_timestamp)
-                        cycle_end_time = exit_timestamp  # Set cycle end time to exit time
+                    pnl = risk_management.calculate_pnl(currentprice)
+                    logger.info(f"Exit condition met at {exit_timestamp}")
+                    entry_record['exit_time'] = exit_timestamp
+                    entry_record['profit_or_loss'] = pnl
+                    entry_record['win_or_loss'] = "win" if pnl > 0 else "loss"
+                    signals.append(entry_record)
                     break
                 else:
                     logger.debug(f"Exit condition not met at {exit_timestamp}")
                     i += 1
 
-            # If no exit was found, set cycle_end_time to last checked timestamp
-            if cycle_end_time is None:
-                cycle_end_time = exit_timestamp
+            # If no exit was found
+            if exit_timestamp is None:
+                entry_record['exit_time'] = None
+                entry_record['profit_or_loss'] = None
+                entry_record['win_or_loss'] = None
+                signals.append(entry_record)
 
-        else:
-            # No signal, so cycle_end_time is last timestamp in df_1h
-            cycle_end_time = df_1h['timestamp'].iloc[-1]
-
-        # Move to next cycle based on last cycle-end timestamp
-        time_considered_1h = cycle_end_time + pd.Timedelta(minutes=15)
-
-        print("Available signals are:", signals)
-
-        # Save results to CSV after each iteration
+        # Save results after each timestamp
         df_results = pd.DataFrame(signals)
         df_results.to_csv(output_csv, index=False)
         logger.info(f"Results saved to {output_csv}")

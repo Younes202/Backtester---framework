@@ -48,7 +48,7 @@ class BinanceSpotKlines:
             raise
 
     async def fetch_data_from_binance(self, start_time):
-        base_url = "https://api.binance.com/api/v3/klines"  # SPOT MARKET API
+        base_url = "https://fapi.binance.com/fapi/v1/klines"  # FUTURES MARKET API
         async with httpx.AsyncClient() as client:
             params = {
                 "symbol": self.symbol,
@@ -78,7 +78,6 @@ class BinanceSpotKlines:
             logger.error("No data available for conversion.")
             raise ValueError("No data available to convert to DataFrame.")
 
-        # Define column names as per API response
         column_names = [
             "open_time", "open", "high", "low", "close", "volume",
             "close_time", "quote_asset_volume", "number_of_trades",
@@ -88,17 +87,19 @@ class BinanceSpotKlines:
         logger.info("Converting fetched data to DataFrame.")
         df = pd.DataFrame(data, columns=column_names)
 
-        # Select necessary columns and process them
+        # Rename 'close_time' to 'timestamp'
         df = df[["open_time", "open", "high", "low", "close", "volume", "close_time"]]
+        df = df.rename(columns={"close_time": "timestamp"})
         df["open_time"] = pd.to_datetime(df["open_time"], unit='ms')
-        df["close_time"] = pd.to_datetime(df["close_time"], unit='ms')
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit='ms')
         df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
 
         logger.info("Data conversion to DataFrame completed.")
         return df
 
+
     def save_to_csv(self, df):
-        output_dir = "spot_klines_data"
+        output_dir = "futures-klines"
         os.makedirs(output_dir, exist_ok=True)
 
         # Save all data into a single file
@@ -112,9 +113,9 @@ class BinanceSpotKlines:
 async def main():
     # Define parameters
     symbol = "BTCUSDT"
-    interval = "15m"  # 1-minute interval
-    start_time = datetime(2025, 6, 1)
-    end_time = datetime(2025, 8, 1, 23, 59, 59)  # Last second of August 1, 2025
+    interval = "1h"  # 1-hour interval
+    start_time = datetime(2025, 1, 1)
+    end_time = datetime(2025, 9, 1, 23, 59, 59)  # Last second of September 1, 2025
 
     # Initialize the Binance Spot Klines class
     klines_fetcher = BinanceSpotKlines(symbol, interval, start_time, end_time)

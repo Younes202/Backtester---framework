@@ -1,279 +1,229 @@
 from ta.trend import EMAIndicator, MACD, ADXIndicator
 from ta.momentum import RSIIndicator
-from ta.volume import VolumeWeightedAveragePrice
-from ta.volatility import BollingerBands
 import pandas as pd
 import talib
 import numpy as np
 from ta.volatility import AverageTrueRange
-from numba import cuda
 
-class Strategy:
-    def __init__(self, data, timeframe_type):
-        self.data = data.copy()
-        self.timeframe_type = timeframe_type
-        self.data['timestamp'] = pd.to_datetime(self.data['timestamp'])
 
-    def calculate_indicators(self):
-        self.data['EMA50'] = EMAIndicator(close=self.data['close'], window=50).ema_indicator() if len(self.data) >= 50 else np.nan
-        self.data['EMA200'] = EMAIndicator(close=self.data['close'], window=200).ema_indicator() if len(self.data) >= 200 else np.nan
-        self.data['RSI'] = RSIIndicator(close=self.data['close'], window=14).rsi() if len(self.data) >= 14 else np.nan
-        
-        if len(self.data) >= 12:  # MACD needs at least window_slow periods
-            macd = MACD(close=self.data['close'], window_slow=12, window_fast=6, window_sign=5)
-            self.data['MACD'] = macd.macd()
-            self.data['MACD_Signal'] = macd.macd_signal()
-        else:
-            self.data['MACD'] = np.nan
-            self.data['MACD_Signal'] = np.nan
-        
-        if len(self.data) >= 14:
-            self.data['ADX'] = ADXIndicator(high=self.data['high'], low=self.data['low'], close=self.data['close'], window=14).adx()
-        else:
-            self.data['ADX'] = np.nan
-        
-        if len(self.data) >= 20:
-            bb = BollingerBands(close=self.data['close'], window=20, window_dev=2)
-            self.data['BB_Width'] = bb.bollinger_hband() - bb.bollinger_lband()
-        else:
-            self.data['BB_Width'] = np.nan
 
-        if all(col in self.data.columns for col in ['high', 'low', 'close', 'volume']):
-            self.data['VWAP'] = VolumeWeightedAveragePrice(
-                high=self.data['high'], low=self.data['low'],
-                close=self.data['close'], volume=self.data['volume'], window=20
-            ).volume_weighted_average_price()
-
-        self.data['Volume_OK'] = self.data['volume'] > self.data['volume'].rolling(20).mean()
-        self.data['Volatility_OK'] = self.data['BB_Width'] > self.data['BB_Width'].rolling(20).mean()
-        self.data['Trend_Strength'] = self.data['ADX'] > 20
-        self.data['Bullish_Engulfing'] = talib.CDLENGULFING(
-            self.data['open'], self.data['high'], self.data['low'], self.data['close']
-        ) > 0
-
-        return self.data
-
-    def detect_fvg(self):
-        self.data['FVG'] = (
-            (self.data['low'].shift(1) > self.data['high'].shift(-1)) |
-            (self.data['high'].shift(1) < self.data['low'].shift(-1))
-        )
-        return self.data
-
-    def detect_cisd(self):
-        self.data['Higher_High'] = self.data['high'] > self.data['high'].shift(1)
-        self.data['Higher_Low'] = self.data['low'] > self.data['low'].shift(1)
-        self.data['Bullish_Structure'] = self.data['Higher_High'] & self.data['Higher_Low']
-        self.data['Lower_High'] = self.data['high'] < self.data['high'].shift(1)
-        self.data['Lower_Low'] = self.data['low'] < self.data['low'].shift(1)
-        self.data['Bearish_Structure'] = self.data['Lower_High'] & self.data['Lower_Low']
-        self.data['atr'] = talib.ATR(self.data['high'], self.data['low'], self.data['close'], timeperiod=14)
-        return self.data
-
-    def generate_signals(self):
-        self.calculate_indicators()
-        self.detect_fvg()
-        self.detect_cisd()
-        
-        # Reset signal column
-        self.data['Signal'] = 0
-        
-        # Common conditions for all timeframes
-        bullish_conditions = (
-            (self.data['EMA50'] > self.data['EMA200']) &
-            (self.data['MACD'] > self.data['MACD_Signal']) &
-            (self.data['Trend_Strength'])  # ADX > 20
-        )
-        
-        bearish_conditions = (
-            (self.data['EMA50'] < self.data['EMA200']) &
-            (self.data['MACD'] < self.data['MACD_Signal']) &
-            (self.data['Trend_Strength'])  # ADX > 20
-        )
-
-        # Timeframe-specific adjustments
-        if self.timeframe_type == '4h':
-            # 4h timeframe - bias detection
-            self.data['Signal'] = np.where(
-                bullish_conditions & (self.data['ADX'] > 25),
-                1,  # Strong bullish bias
-                np.where(
-                    bearish_conditions & (self.data['ADX'] > 25),
-                    -1,  # Strong bearish bias
-                    0    # Neutral
-                )
-            )
-        
-        elif self.timeframe_type == '1h':
-            # 1h timeframe - confirmation
-            self.data['Signal'] = np.where(
-                bullish_conditions & 
-                (self.data['RSI'] > 50) & 
-                (self.data['Volume_OK']),
-                1,  # Long confirmation
-                np.where(
-                    bearish_conditions & 
-                    (self.data['RSI'] < 50) & 
-                    (self.data['Volume_OK']),
-                    -1,  # Short confirmation
-                    0    # No confirmation
-                )
-            )
-        
-        elif self.timeframe_type == '15m':
-            # 15m timeframe - entries
-            self.data['Signal'] = np.where(
-                bullish_conditions & 
-                (self.data['Bullish_Structure']) & 
-                (self.data['Volatility_OK']),
-                1,  # Long entry
-                np.where(
-                    bearish_conditions & 
-                    (self.data['Bearish_Structure']) & 
-                    (self.data['Volatility_OK']),
-                    -1,  # Short entry
-                    0    # No entry
-                )
-            )
-        
-        elif self.timeframe_type == '1m':
-            # 1m timeframe - only calculate ATR
-            self.data['atr'] = talib.ATR(self.data['high'], self.data['low'], 
-                                    self.data['close'], timeperiod=14)
-        
-        return self.data
 
 class DayTradingStrategy:
-    def __init__(self, data):
-        self.data = data.copy()
-        # Use 'timestamp' if present, else fallback to 'close_time'
-        if 'timestamp' in self.data.columns:
-            self.data['timestamp'] = pd.to_datetime(self.data['timestamp'])
-        elif 'close_time' in self.data.columns:
-            self.data['timestamp'] = pd.to_datetime(self.data['close_time'])
+    def __init__(self, data_15m=None, data_1h=None):
+        self.data_15m = data_15m.copy() if data_15m is not None else None
+        self.data_1h = data_1h.copy() if data_1h is not None else None
+        
+        # Convert timestamps
+        for df in [self.data_15m, self.data_1h]:
+            if df is not None and "timestamp" in df.columns:
+                df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+    # ============== 1H TREND DIRECTION ==============
+    def calculate_1h_trend(self):
+        df = self.data_1h.copy()
+        df["EMA_50"] = talib.EMA(df["close"], timeperiod=50)
+        df["EMA_200"] = talib.EMA(df["close"], timeperiod=200)
+        df["RSI_14"] = talib.RSI(df["close"], timeperiod=14)
+        df["ADX_14"] = talib.ADX(df["high"], df["low"], df["close"], timeperiod=14)
+        
+        # VWAP approximation
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+        df["VWAP"] = (typical_price * df['volume']).cumsum() / df['volume'].cumsum()
+        df["Volume_MA"] = talib.SMA(df["volume"], timeperiod=20)
+        
+        # Trend definitions
+        df["Bullish_Trend"] = (df["EMA_50"] > df["EMA_200"]) & (df["close"] > df["VWAP"]) & (df["ADX_14"] > 20)
+        df["Bearish_Trend"] = (df["EMA_50"] < df["EMA_200"]) & (df["close"] < df["VWAP"]) & (df["ADX_14"] > 20)
+        df["Strong_Bullish"] = df["Bullish_Trend"] & (df["RSI_14"] > 55) & (df["volume"] > df["Volume_MA"])
+        df["Strong_Bearish"] = df["Bearish_Trend"] & (df["RSI_14"] < 45) & (df["volume"] > df["Volume_MA"])
+        # Candle patterns
+        df["Engulfing_Bull"] = talib.CDLENGULFING(df["open"], df["high"], df["low"], df["close"]) == 100
+        df["Engulfing_Bear"] = talib.CDLENGULFING(df["open"], df["high"], df["low"], df["close"]) == -100
+        df["Shoulder_Bull"] = talib.CDLPIERCING(df["open"], df["high"], df["low"], df["close"]) > 0
+        df["Shoulder_Bear"] = talib.CDLDARKCLOUDCOVER(df["open"], df["high"], df["low"], df["close"]) < 0
+        # S/R levels
+        df["SR_20_High"] = df["high"].rolling(20).max()
+        df["SR_20_Low"] = df["low"].rolling(20).min()
+        return df
+
+    # ============== 15M ENTRY SIGNALS ==============
+    def calculate_15m_entries(self):
+        df = self.data_15m.copy()
+        df["EMA_50"] = talib.EMA(df["close"], timeperiod=50)
+        df["EMA_200"] = talib.EMA(df["close"], timeperiod=200)
+        df["RSI_14"] = talib.RSI(df["close"], timeperiod=14)
+        df["ADX_14"] = talib.ADX(df["high"], df["low"], df["close"], timeperiod=14)
+        # VWAP approximation
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+        df["VWAP"] = (typical_price * df['volume']).cumsum() / df['volume'].cumsum()
+        df["Volume_MA"] = talib.SMA(df["volume"], timeperiod=20)
+        # S/R zones
+        df["SR_20_High"] = df["high"].rolling(20).max()
+        df["SR_20_Low"] = df["low"].rolling(20).min()
+        # Candle patterns
+        df["Engulfing_Bull"] = talib.CDLENGULFING(df["open"], df["high"], df["low"], df["close"]) == 100
+        df["Engulfing_Bear"] = talib.CDLENGULFING(df["open"], df["high"], df["low"], df["close"]) == -100
+        df["Shoulder_Bull"] = talib.CDLPIERCING(df["open"], df["high"], df["low"], df["close"]) > 0
+        df["Shoulder_Bear"] = talib.CDLDARKCLOUDCOVER(df["open"], df["high"], df["low"], df["close"]) < 0
+        return df
+
+    # ============== GENERATE SIGNALS ==============
+    def generate_signals(self):
+        df_1h = self.calculate_1h_trend()
+        df_15m = self.calculate_15m_entries()
+        
+        # Merge trend into 15m candles
+        df_1h_trend = df_1h[["timestamp", "Strong_Bullish", "Strong_Bearish", "Engulfing_Bull", "Engulfing_Bear", "Shoulder_Bull", "Shoulder_Bear"]]
+        df_15m = pd.merge_asof(
+            df_15m.sort_values("timestamp"),
+            df_1h_trend.sort_values("timestamp"),
+            on="timestamp",
+            direction="backward"
+        )
+        df_15m[["Strong_Bullish", "Strong_Bearish", "Engulfing_Bull", "Engulfing_Bear", "Shoulder_Bull", "Shoulder_Bear"]] = \
+            df_15m[["Strong_Bullish", "Strong_Bearish", "Engulfing_Bull", "Engulfing_Bear", "Shoulder_Bull", "Shoulder_Bear"]].fillna(False)
+
+        # Initialize signal
+        df_15m["Signal"] = 0
+
+        # ========= ENTRY CONDITIONS =========
+        for i in range(len(df_15m)):
+            row = df_15m.iloc[i]
+            # LONG
+            if row["Strong_Bullish"]:
+                # Breakout above resistance with bullish candle pattern
+                if row["close"] > row["SR_20_High"] and (row["Engulfing_Bull"] or row["Shoulder_Bull"]):
+                    df_15m.at[i, "Signal"] = 1
+                # Pullback near support with bullish candle pattern
+                elif row["close"] > row["EMA_50"] and row["close"] <= row["SR_20_Low"] * 1.02 and (row["Engulfing_Bull"] or row["Shoulder_Bull"]):
+                    df_15m.at[i, "Signal"] = 1
+            # SHORT
+            elif row["Strong_Bearish"]:
+                # Breakdown below support with bearish candle pattern
+                if row["close"] < row["SR_20_Low"] and (row["Engulfing_Bear"] or row["Shoulder_Bear"]):
+                    df_15m.at[i, "Signal"] = -1
+                # Pullback near resistance with bearish candle pattern
+                elif row["close"] < row["EMA_50"] and row["close"] >= row["SR_20_High"] * 0.98 and (row["Engulfing_Bear"] or row["Shoulder_Bear"]):
+                    df_15m.at[i, "Signal"] = -1
+
+        return df_15m
+
+
+
+class Strategy:
+    def __init__(self, data_15m=None, data_1h=None, data_4h=None):
+        """
+        Accepts up to three timeframes: 15m, 1h, 4h.
+        All should be pandas DataFrames with OHLCV and 'timestamp' columns.
+        """
+        self.data_15m = data_15m.copy()
+        self.data_1h = data_1h.copy() 
+        self.data_4h = data_4h.copy() 
+
+        # Convert timestamps
+        for df in [self.data_15m, self.data_1h, self.data_4h]:
+            if df is not None and "timestamp" in df.columns:
+                df["timestamp"] = pd.to_datetime(df["timestamp"])
 
     def calculate_indicators(self):
-        # Moving Averages
-        self.data['EMA50'] = EMAIndicator(close=self.data['close'], window=50).ema_indicator() if len(self.data) >= 50 else np.nan
-        self.data['EMA200'] = EMAIndicator(close=self.data['close'], window=200).ema_indicator() if len(self.data) >= 200 else np.nan
-        # RSI
-        self.data['RSI'] = RSIIndicator(close=self.data['close'], window=14).rsi() if len(self.data) >= 14 else np.nan
-        # VWAP
-        if all(col in self.data.columns for col in ['high', 'low', 'close', 'volume']):
-            self.data['VWAP'] = VolumeWeightedAveragePrice(
-                high=self.data['high'], low=self.data['low'],
-                close=self.data['close'], volume=self.data['volume'], window=20
-            ).volume_weighted_average_price()
-        else:
-            self.data['VWAP'] = np.nan
-        # Support/Resistance
-        self.data['Support'] = self.data['low'].rolling(window=20, min_periods=1).min()
-        self.data['Resistance'] = self.data['high'].rolling(window=20, min_periods=1).max()
-        # ATR for 1m timeframe
-        self.data['atr'] = talib.ATR(self.data['high'], self.data['low'], self.data['close'], timeperiod=14)
-        # Candle patterns (confirmation metric)
-        self.data['Bullish_Engulfing'] = talib.CDLENGULFING(
-            self.data['open'], self.data['high'], self.data['low'], self.data['close']
-        ) > 0
-        self.data['Bearish_Engulfing'] = talib.CDLENGULFING(
-            self.data['open'], self.data['high'], self.data['low'], self.data['close']
-        ) < 0
-        self.data['Hammer'] = talib.CDLHAMMER(
-            self.data['open'], self.data['high'], self.data['low'], self.data['close']
-        ) > 0
-        self.data['ShootingStar'] = talib.CDLSHOOTINGSTAR(
-            self.data['open'], self.data['high'], self.data['low'], self.data['close']
-        ) > 0
+        # Calculate indicators for each timeframe if present
+        if self.data_4h is not None:
+            df = self.data_4h
+            df['EMA50'] = EMAIndicator(close=df['close'], window=50).ema_indicator() if len(df) >= 50 else np.nan
+            df['EMA200'] = EMAIndicator(close=df['close'], window=200).ema_indicator() if len(df) >= 200 else np.nan
+            df['ADX'] = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14).adx() if len(df) >= 14 else np.nan
+            df['MACD'] = MACD(close=df['close'], window_slow=12, window_fast=6, window_sign=5).macd() if len(df) >= 12 else np.nan
+            df['MACD_Signal'] = MACD(close=df['close'], window_slow=12, window_fast=6, window_sign=5).macd_signal() if len(df) >= 12 else np.nan
+            df['Bias_Bull'] = (df['EMA50'] > df['EMA200']) & (df['MACD'] > df['MACD_Signal']) & (df['ADX'] > 25)
+            df['Bias_Bear'] = (df['EMA50'] < df['EMA200']) & (df['MACD'] < df['MACD_Signal']) & (df['ADX'] > 25)
+            self.data_4h = df
 
-        # Advanced candle patterns (shoulders, head-and-shoulders, etc.)
-        # Simple shoulder detection: local maxima/minima for head and shoulders
-        self.data['LeftShoulder'] = (self.data['high'].shift(2) < self.data['high'].shift(1)) & (self.data['high'].shift(1) < self.data['high']) & (self.data['high'] > self.data['high'].shift(-1)) & (self.data['high'].shift(-1) > self.data['high'].shift(-2))
-        self.data['Head'] = (self.data['high'] > self.data['high'].shift(1)) & (self.data['high'] > self.data['high'].shift(-1))
-        self.data['RightShoulder'] = (self.data['high'].shift(-2) < self.data['high'].shift(-1)) & (self.data['high'].shift(-1) < self.data['high']) & (self.data['high'] > self.data['high'].shift(1)) & (self.data['high'].shift(1) > self.data['high'].shift(2))
-        # Inverse head and shoulders (for lows)
-        self.data['InverseLeftShoulder'] = (self.data['low'].shift(2) > self.data['low'].shift(1)) & (self.data['low'].shift(1) > self.data['low']) & (self.data['low'] < self.data['low'].shift(-1)) & (self.data['low'].shift(-1) < self.data['low'].shift(-2))
-        self.data['InverseHead'] = (self.data['low'] < self.data['low'].shift(1)) & (self.data['low'] < self.data['low'].shift(-1))
-        self.data['InverseRightShoulder'] = (self.data['low'].shift(-2) > self.data['low'].shift(-1)) & (self.data['low'].shift(-1) > self.data['low']) & (self.data['low'] < self.data['low'].shift(1)) & (self.data['low'].shift(1) < self.data['low'].shift(2))
+        if self.data_1h is not None:
+            df = self.data_1h
+            df['EMA50'] = EMAIndicator(close=df['close'], window=50).ema_indicator() if len(df) >= 50 else np.nan
+            df['EMA200'] = EMAIndicator(close=df['close'], window=200).ema_indicator() if len(df) >= 200 else np.nan
+            df['RSI'] = RSIIndicator(close=df['close'], window=14).rsi() if len(df) >= 14 else np.nan
+            df['MACD'] = MACD(close=df['close'], window_slow=12, window_fast=6, window_sign=5).macd() if len(df) >= 12 else np.nan
+            df['MACD_Signal'] = MACD(close=df['close'], window_slow=12, window_fast=6, window_sign=5).macd_signal() if len(df) >= 12 else np.nan
+            df['Volume_OK'] = df['volume'] > df['volume'].rolling(20).mean()
+            df['Confirm_Long'] = (df['EMA50'] > df['EMA200']) & (df['MACD'] > df['MACD_Signal']) & (df['RSI'] > 50) & (df['Volume_OK'])
+            df['Confirm_Short'] = (df['EMA50'] < df['EMA200']) & (df['MACD'] < df['MACD_Signal']) & (df['RSI'] < 50) & (df['Volume_OK'])
+            self.data_1h = df
 
-        # --- Pullback and Breakout Concepts ---
-        # Breakout above resistance: close > previous resistance
-        self.data['Breakout_Long'] = self.data['close'] > self.data['Resistance'].shift(1)
-        # Breakout below support: close < previous support
-        self.data['Breakout_Short'] = self.data['close'] < self.data['Support'].shift(1)
-        # Pullback to support: price drops to support after being above resistance
-        self.data['Pullback_Long'] = (
-            (self.data['close'].shift(1) > self.data['Resistance'].shift(1)) &
-            (self.data['close'] < self.data['Support'])
-        )
-        # Pullback to resistance: price rises to resistance after being below support
-        self.data['Pullback_Short'] = (
-            (self.data['close'].shift(1) < self.data['Support'].shift(1)) &
-            (self.data['close'] > self.data['Resistance'])
-        )
-
-        return self.data
+        if self.data_15m is not None:
+            df = self.data_15m
+            df['EMA50'] = EMAIndicator(close=df['close'], window=50).ema_indicator() if len(df) >= 50 else np.nan
+            df['EMA200'] = EMAIndicator(close=df['close'], window=200).ema_indicator() if len(df) >= 200 else np.nan
+            df['MACD'] = MACD(close=df['close'], window_slow=12, window_fast=6, window_sign=5).macd() if len(df) >= 12 else np.nan
+            df['MACD_Signal'] = MACD(close=df['close'], window_slow=12, window_fast=6, window_sign=5).macd_signal() if len(df) >= 12 else np.nan
+            df['ADX'] = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14).adx() if len(df) >= 14 else np.nan
+            df['RSI'] = RSIIndicator(close=df['close'], window=14).rsi() if len(df) >= 14 else np.nan
+            df['Volume_OK'] = df['volume'] > df['volume'].rolling(20).mean()
+            df['Bullish_Structure'] = (df['high'] > df['high'].shift(1)) & (df['low'] > df['low'].shift(1))
+            df['Bearish_Structure'] = (df['high'] < df['high'].shift(1)) & (df['low'] < df['low'].shift(1))
+            self.data_15m = df
 
     def generate_signals(self):
+        """
+        Returns a DataFrame of 15m signals where all conditions across 4h, 1h, and 15m are met.
+        Requires all three timeframes to be present.
+        """
         self.calculate_indicators()
-        self.data['Signal'] = 0
+        if self.data_4h is None or self.data_1h is None or self.data_15m is None:
+            raise ValueError("All three timeframes (15m, 1h, 4h) must be provided.")
 
-        # Trend bias
-        bullish_bias = (self.data['EMA50'] > self.data['EMA200'])
-        bearish_bias = (self.data['EMA50'] < self.data['EMA200'])
+        # Merge bias from 4h and confirmation from 1h into 15m
+        df_4h = self.data_4h[['timestamp', 'Bias_Bull', 'Bias_Bear']]
+        df_1h = self.data_1h[['timestamp', 'Confirm_Long', 'Confirm_Short']]
+        df_15m = self.data_15m.copy()
 
-        # Candle pattern confirmation
-        bullish_candle = (
-            self.data['Bullish_Engulfing'] |
-            self.data['Hammer'] |
-            self.data['InverseHead'] | (self.data['InverseLeftShoulder'] & self.data['InverseRightShoulder'])
+        # Merge asof for latest bias/confirm at each 15m candle
+        df_15m = pd.merge_asof(
+            df_15m.sort_values("timestamp"),
+            df_4h.sort_values("timestamp"),
+            on="timestamp",
+            direction="backward"
         )
-        bearish_candle = (
-            self.data['Bearish_Engulfing'] |
-            self.data['ShootingStar'] |
-            self.data['Head'] | (self.data['LeftShoulder'] & self.data['RightShoulder'])
-        )
-
-        # Buy confirmation: RSI < 30, EMA50 > EMA200, price above VWAP, breakout above resistance or pullback to support, plus bullish candle pattern
-        buy_condition = (
-            (self.data['RSI'] < 30) &
-            bullish_bias &
-            (self.data['close'] > self.data['VWAP']) &
-            (
-                self.data['Breakout_Long'] |  # breakout above resistance
-                self.data['Pullback_Long']    # pullback to support
-            ) &
-            bullish_candle
+        df_15m = pd.merge_asof(
+            df_15m.sort_values("timestamp"),
+            df_1h.sort_values("timestamp"),
+            on="timestamp",
+            direction="backward"
         )
 
-        # Sell confirmation: RSI > 70, EMA50 < EMA200, price below VWAP, breakout below support or pullback to resistance, plus bearish candle pattern
-        sell_condition = (
-            (self.data['RSI'] > 70) &
-            bearish_bias &
-            (self.data['close'] < self.data['VWAP']) &
-            (
-                self.data['Breakout_Short'] |  # breakout below support
-                self.data['Pullback_Short']    # pullback to resistance
-            ) &
-            bearish_candle
-        )
+        # Fill missing with False for boolean columns
+        for col in ['Bias_Bull', 'Bias_Bear', 'Confirm_Long', 'Confirm_Short', 'Bullish_Structure', 'Bearish_Structure', 'Volume_OK']:
+            if col in df_15m.columns:
+                df_15m[col] = df_15m[col].fillna(False)
 
-        self.data['Signal'] = np.where(
-            buy_condition, 1,
-            np.where(
-                sell_condition, -1, 0
-            )
-        )
+        # Fill missing with 0 for numeric columns
+        for col in ['EMA50', 'EMA200', 'MACD', 'MACD_Signal', 'ADX']:
+            if col in df_15m.columns:
+                df_15m[col] = df_15m[col].fillna(0)
 
-        # If last signal is always 0, relax conditions for edge cases
-        if self.data['Signal'].iloc[-1] == 0:
-            # Try a simple momentum-based fallback
-            if len(self.data) > 1:
-                if self.data['close'].iloc[-1] > self.data['close'].iloc[-2]:
-                    self.data.loc[self.data.index[-1], 'Signal'] = 1
-                elif self.data['close'].iloc[-1] < self.data['close'].iloc[-2]:
-                    self.data.loc[self.data.index[-1], 'Signal'] = -1
+        # Signal: all conditions must be True
+        df_15m['Signal'] = 0
+        df_15m.loc[
+            df_15m['Bias_Bull'] & df_15m['Confirm_Long'] &
+            (df_15m['EMA50'] > df_15m['EMA200']) &
+            (df_15m['MACD'] > df_15m['MACD_Signal']) &
+            (df_15m['ADX'] > 20) &
+            (df_15m['Bullish_Structure']) &
+            (df_15m['Volume_OK']),
+            'Signal'
+        ] = 1
 
-        return self.data
+        df_15m.loc[
+            df_15m['Bias_Bear'] & df_15m['Confirm_Short'] &
+            (df_15m['EMA50'] < df_15m['EMA200']) &
+            (df_15m['MACD'] < df_15m['MACD_Signal']) &
+            (df_15m['ADX'] > 20) &
+            (df_15m['Bearish_Structure']) &
+            (df_15m['Volume_OK']),
+            'Signal'
+        ] = -1
+
+        return df_15m[['timestamp', 'close', 'Signal']]
 
 
 class SwingStrategy:
@@ -490,11 +440,6 @@ class FuturesStrategyScalping:
             (self.data['Reset']),
             'Signal'
             ] = -1
-
-        # Final check
-        if self.data['Signal'].abs().sum() == 0:
-            print("❌ CRITICAL: Still no signals - check data/indicators")
-            print(self.data[['timestamp','close','EMA3','EMA8','RSI_2','Momentum']].tail(10))
 
         return self.data
 
